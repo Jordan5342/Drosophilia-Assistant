@@ -3,22 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Drosophila Research Assistant - AI-Powered Research Tool</title>
+    <title>Drosophila Research Assistant</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🪰</text></svg>">
     <style>
         :root {
-            --primary: #6366f1;
-            --primary-dark: #4f46e5;
-            --secondary: #8b5cf6;
+            --primary: ##C19A6B;
             --success: #10b981;
-            --warning: #f59e0b;
-            --danger: #ef4444;
-            --bg-light: #f8fafc;
             --bg-white: #ffffff;
             --text-dark: #1e293b;
             --text-gray: #64748b;
             --border: #e2e8f0;
-            --shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1);
             --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1);
         }
 
@@ -29,14 +23,14 @@
         }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
             padding: 20px;
         }
 
         .container {
-            max-width: 1200px;
+            max-width: 1000px;
             margin: 0 auto;
             background: var(--bg-white);
             border-radius: 16px;
@@ -47,7 +41,6 @@
             height: calc(100vh - 40px);
         }
 
-        /* Header */
         .header {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
@@ -55,8 +48,6 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            flex-wrap: wrap;
-            gap: 16px;
         }
 
         .header-left {
@@ -71,7 +62,6 @@
 
         .title-group h1 {
             font-size: 24px;
-            margin-bottom: 4px;
             font-weight: 600;
         }
 
@@ -83,6 +73,25 @@
         .header-actions {
             display: flex;
             gap: 12px;
+            align-items: center;
+        }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 500;
+            background: rgba(16, 185, 129, 0.2);
+        }
+
+        .status-badge .dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: currentColor;
         }
 
         .btn {
@@ -93,124 +102,25 @@
             font-weight: 500;
             cursor: pointer;
             transition: all 0.2s;
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .btn-white {
             background: white;
             color: var(--primary);
         }
 
-        .btn-white:hover {
+        .btn:hover {
             transform: translateY(-1px);
             box-shadow: 0 4px 12px rgba(0,0,0,0.15);
         }
 
-        .btn-outline {
-            background: transparent;
-            color: white;
-            border: 2px solid white;
-        }
-
-        .btn-outline:hover {
-            background: rgba(255,255,255,0.1);
-        }
-
-        /* Main Content */
-        .main {
-            display: flex;
-            flex: 1;
-            overflow: hidden;
-        }
-
-        /* Sidebar */
-        .sidebar {
-            width: 280px;
-            background: var(--bg-light);
-            border-right: 1px solid var(--border);
-            padding: 24px;
-            overflow-y: auto;
-            display: flex;
-            flex-direction: column;
-            gap: 24px;
-        }
-
-        .sidebar-section h3 {
-            font-size: 14px;
-            font-weight: 600;
-            color: var(--text-gray);
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            margin-bottom: 12px;
-        }
-
-        .example-card {
-            background: white;
-            padding: 16px;
-            border-radius: 8px;
-            border: 1px solid var(--border);
-            cursor: pointer;
-            transition: all 0.2s;
-            margin-bottom: 8px;
-        }
-
-        .example-card:hover {
-            border-color: var(--primary);
-            transform: translateX(4px);
-            box-shadow: var(--shadow);
-        }
-
-        .example-card .icon {
-            font-size: 20px;
-            margin-bottom: 8px;
-        }
-
-        .example-card .title {
-            font-weight: 500;
-            font-size: 14px;
-            color: var(--text-dark);
-            margin-bottom: 4px;
-        }
-
-        .example-card .desc {
-            font-size: 12px;
-            color: var(--text-gray);
-        }
-
-        .feature-list {
-            list-style: none;
-        }
-
-        .feature-list li {
-            padding: 8px 0;
-            font-size: 13px;
-            color: var(--text-gray);
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .feature-list li::before {
-            content: "✓";
-            color: var(--success);
-            font-weight: bold;
-        }
-
-        /* Chat Area */
         .chat-area {
             flex: 1;
             display: flex;
             flex-direction: column;
-            background: white;
         }
 
         .messages {
             flex: 1;
             overflow-y: auto;
             padding: 24px;
-            scroll-behavior: smooth;
         }
 
         .welcome-screen {
@@ -220,7 +130,6 @@
             justify-content: center;
             height: 100%;
             text-align: center;
-            color: var(--text-gray);
             padding: 48px;
         }
 
@@ -235,12 +144,6 @@
             margin-bottom: 12px;
         }
 
-        .welcome-screen p {
-            font-size: 16px;
-            max-width: 600px;
-            line-height: 1.6;
-        }
-
         .message {
             display: flex;
             gap: 16px;
@@ -249,14 +152,8 @@
         }
 
         @keyframes slideIn {
-            from {
-                opacity: 0;
-                transform: translateY(10px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
         }
 
         .message.user {
@@ -271,7 +168,6 @@
             align-items: center;
             justify-content: center;
             font-size: 20px;
-            flex-shrink: 0;
         }
 
         .message.user .avatar {
@@ -279,16 +175,14 @@
         }
 
         .message.assistant .avatar {
-            background: var(--bg-light);
+            background: #f8fafc;
         }
 
         .message-content {
-            max-width: 70%;
-            background: var(--bg-light);
+            max-width: 75%;
             padding: 16px 20px;
             border-radius: 12px;
             line-height: 1.6;
-            font-size: 15px;
         }
 
         .message.user .message-content {
@@ -301,17 +195,9 @@
             border: 1px solid var(--border);
         }
 
-        .message-meta {
-            font-size: 11px;
-            color: var(--text-gray);
-            margin-top: 8px;
-            opacity: 0.7;
-        }
-
         .typing-indicator {
             display: flex;
             gap: 6px;
-            padding: 20px;
         }
 
         .typing-indicator span {
@@ -322,28 +208,17 @@
             animation: typing 1.4s infinite;
         }
 
-        .typing-indicator span:nth-child(2) {
-            animation-delay: 0.2s;
-        }
-
-        .typing-indicator span:nth-child(3) {
-            animation-delay: 0.4s;
-        }
+        .typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
+        .typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
 
         @keyframes typing {
-            0%, 60%, 100% {
-                transform: translateY(0);
-            }
-            30% {
-                transform: translateY(-10px);
-            }
+            0%, 60%, 100% { transform: translateY(0); }
+            30% { transform: translateY(-10px); }
         }
 
-        /* Input Area */
         .input-area {
             padding: 24px;
             border-top: 1px solid var(--border);
-            background: white;
         }
 
         .input-controls {
@@ -355,7 +230,6 @@
         .input-wrapper {
             display: flex;
             gap: 12px;
-            align-items: flex-end;
         }
 
         #messageInput {
@@ -368,7 +242,6 @@
             resize: none;
             min-height: 56px;
             max-height: 200px;
-            transition: border-color 0.2s;
         }
 
         #messageInput:focus {
@@ -382,20 +255,16 @@
             padding: 14px 32px;
             border: none;
             border-radius: 12px;
-            font-size: 15px;
             font-weight: 600;
             cursor: pointer;
-            transition: all 0.2s;
         }
 
         .btn-send:hover:not(:disabled) {
             transform: translateY(-2px);
-            box-shadow: 0 8px 16px rgba(102, 126, 234, 0.3);
         }
 
         .btn-send:disabled {
             opacity: 0.5;
-            cursor: not-allowed;
         }
 
         .btn-icon {
@@ -404,16 +273,8 @@
             background: white;
             border-radius: 8px;
             cursor: pointer;
-            transition: all 0.2s;
-            font-size: 16px;
         }
 
-        .btn-icon:hover {
-            background: var(--bg-light);
-            border-color: var(--primary);
-        }
-
-        /* Modal */
         .modal {
             display: none;
             position: fixed;
@@ -422,7 +283,6 @@
             width: 100%;
             height: 100%;
             background: rgba(0,0,0,0.5);
-            z-index: 1000;
             align-items: center;
             justify-content: center;
         }
@@ -437,20 +297,12 @@
             padding: 32px;
             max-width: 600px;
             width: 90%;
-            max-height: 80vh;
-            overflow-y: auto;
         }
 
         .modal-header {
             display: flex;
             justify-content: space-between;
-            align-items: center;
             margin-bottom: 24px;
-        }
-
-        .modal-header h2 {
-            font-size: 24px;
-            color: var(--text-dark);
         }
 
         .modal-close {
@@ -458,7 +310,6 @@
             border: none;
             font-size: 24px;
             cursor: pointer;
-            color: var(--text-gray);
         }
 
         .modal-body textarea {
@@ -467,168 +318,49 @@
             padding: 16px;
             border: 1px solid var(--border);
             border-radius: 8px;
-            font-family: 'Courier New', monospace;
-            font-size: 13px;
-            resize: vertical;
-        }
-
-        /* Responsive */
-        @media (max-width: 768px) {
-            .sidebar {
-                display: none;
-            }
-
-            .message-content {
-                max-width: 85%;
-            }
-
-            .header {
-                padding: 16px;
-            }
-
-            .header-left {
-                flex-direction: column;
-                align-items: flex-start;
-                gap: 8px;
-            }
-        }
-
-        /* Status Badge */
-        .status-badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 6px 12px;
-            border-radius: 20px;
-            font-size: 12px;
-            font-weight: 500;
-        }
-
-        .status-badge.success {
-            background: rgba(16, 185, 129, 0.1);
-            color: var(--success);
-        }
-
-        .status-badge.error {
-            background: rgba(239, 68, 68, 0.1);
-            color: var(--danger);
-        }
-
-        .status-badge .dot {
-            width: 6px;
-            height: 6px;
-            border-radius: 50%;
-            background: currentColor;
+            font-family: monospace;
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <!-- Header -->
         <div class="header">
             <div class="header-left">
                 <div class="logo">🪰</div>
                 <div class="title-group">
                     <h1>Drosophila Research Assistant</h1>
-                    <p>AI-powered research tool with PubMed integration</p>
+                    <p>AI-powered with PubMed & FlyBase</p>
                 </div>
             </div>
             <div class="header-actions">
-                <span id="statusBadge" class="status-badge success">
-                    <span class="dot"></span>
-                    Connected
+                <span id="statusBadge" class="status-badge">
+                    <span class="dot"></span> Connected
                 </span>
-                <button class="btn btn-outline" onclick="showAbout()">
-                    ℹ️ About
-                </button>
-                <button class="btn btn-white" onclick="exportConversation()">
-                    💾 Export
-                </button>
+                <button class="btn" onclick="exportConversation()">💾 Export</button>
             </div>
         </div>
 
-        <!-- Main Content -->
-        <div class="main">
-            <!-- Sidebar -->
-            <div class="sidebar">
-                <div class="sidebar-section">
-                    <h3>Quick Start Examples</h3>
-                    <div class="example-card" onclick="sendExample('What are the key developmental genes in Drosophila and what do they control?')">
-                        <div class="icon">🧬</div>
-                        <div class="title">Developmental Genetics</div>
-                        <div class="desc">Learn about key genes in fly development</div>
-                    </div>
-                    <div class="example-card" onclick="sendExample('Find recent research on Drosophila circadian rhythm regulation')">
-                        <div class="icon">⏰</div>
-                        <div class="title">Circadian Biology</div>
-                        <div class="desc">Search recent publications on circadian rhythms</div>
-                    </div>
-                    <div class="example-card" onclick="sendExample('How is Drosophila used to model human neurodegenerative diseases?')">
-                        <div class="icon">🧠</div>
-                        <div class="title">Disease Models</div>
-                        <div class="desc">Understand fly models of human disease</div>
-                    </div>
-                    <div class="example-card" onclick="sendExample('Explain CRISPR techniques for Drosophila genome editing')">
-                        <div class="icon">✂️</div>
-                        <div class="title">CRISPR & Genetics</div>
-                        <div class="desc">Modern genetic manipulation techniques</div>
-                    </div>
-                    <div class="example-card" onclick="sendExample('What are the advantages of Drosophila as a model organism?')">
-                        <div class="icon">🔬</div>
-                        <div class="title">Model Organism</div>
-                        <div class="desc">Why use flies for research?</div>
-                    </div>
-                </div>
-
-                <div class="sidebar-section">
-                    <h3>Features</h3>
-                    <ul class="feature-list">
-                        <li>PubMed literature search</li>
-                        <li>Expert Drosophila knowledge</li>
-                        <li>Citation with PMID links</li>
-                        <li>Conversation memory</li>
-                        <li>Export conversations</li>
-                        <li>Real-time responses</li>
-                    </ul>
+        <div class="chat-area">
+            <div class="messages" id="messages">
+                <div class="welcome-screen">
+                    <div class="icon">🪰</div>
+                    <h2>Welcome!</h2>
+                    <p>Ask me about Drosophila genetics, search papers, or get gene info from FlyBase.</p>
                 </div>
             </div>
 
-            <!-- Chat Area -->
-            <div class="chat-area">
-                <div class="messages" id="messages">
-                    <div class="welcome-screen">
-                        <div class="icon">🪰</div>
-                        <h2>Welcome to Your Research Assistant</h2>
-                        <p>I'm specialized in Drosophila melanogaster research and can search PubMed for relevant publications. Ask me about genetics, development, experimental techniques, or any fly research topic!</p>
-                    </div>
+            <div class="input-area">
+                <div class="input-controls">
+                    <button class="btn-icon" onclick="resetConversation()" title="Reset">🔄</button>
                 </div>
-
-                <!-- Input Area -->
-                <div class="input-area">
-                    <div class="input-controls">
-                        <button class="btn-icon" onclick="resetConversation()" title="Start new conversation">
-                            🔄
-                        </button>
-                        <button class="btn-icon" onclick="toggleSidebar()" title="Toggle sidebar">
-                            ☰
-                        </button>
-                    </div>
-                    <div class="input-wrapper">
-                        <textarea 
-                            id="messageInput" 
-                            placeholder="Ask about Drosophila research, genes, papers, or techniques..."
-                            onkeydown="handleKeyPress(event)"
-                        ></textarea>
-                        <button class="btn-send" id="sendBtn" onclick="sendMessage()">
-                            Send 📤
-                        </button>
-                    </div>
+                <div class="input-wrapper">
+                    <textarea id="messageInput" placeholder="Ask about Drosophila research..." onkeydown="handleKeyPress(event)"></textarea>
+                    <button class="btn-send" id="sendBtn" onclick="sendMessage()">Send 📤</button>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Export Modal -->
     <div class="modal" id="exportModal">
         <div class="modal-content">
             <div class="modal-header">
@@ -638,42 +370,8 @@
             <div class="modal-body">
                 <textarea id="exportText" readonly></textarea>
                 <br><br>
-                <button class="btn btn-white" onclick="downloadExport()">📥 Download Markdown</button>
-                <button class="btn btn-outline" onclick="copyExport()">📋 Copy to Clipboard</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- About Modal -->
-    <div class="modal" id="aboutModal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h2>About This Tool</h2>
-                <button class="modal-close" onclick="closeModal('aboutModal')">×</button>
-            </div>
-            <div class="modal-body">
-                <h3>Drosophila Research Assistant</h3>
-                <p><strong>Version:</strong> 1.0</p>
-                <p><strong>Powered by:</strong> Claude AI (Anthropic) & PubMed</p>
-                <br>
-                <h4>What can it do?</h4>
-                <ul class="feature-list">
-                    <li>Answer questions about Drosophila biology</li>
-                    <li>Search PubMed for relevant research papers</li>
-                    <li>Explain complex genetic concepts</li>
-                    <li>Suggest experimental approaches</li>
-                    <li>Provide citations with PMID links</li>
-                </ul>
-                <br>
-                <h4>Tips for best results:</h4>
-                <ul class="feature-list">
-                    <li>Be specific about what you want to know</li>
-                    <li>Mention if you want recent papers</li>
-                    <li>Ask follow-up questions for details</li>
-                    <li>Request explanations at your level</li>
-                </ul>
-                <br>
-                <p><em>For support or feedback, contact your system administrator.</em></p>
+                <button class="btn" onclick="downloadExport()">📥 Download</button>
+                <button class="btn" onclick="copyExport()">📋 Copy</button>
             </div>
         </div>
     </div>
@@ -683,203 +381,122 @@
         const sessionId = 'session_' + Date.now();
         let isTyping = false;
 
-        // Check API health on load
         async function checkHealth() {
             try {
                 const response = await fetch(`${API_URL}/health`);
                 const data = await response.json();
-                updateStatus(data.api_configured);
-            } catch (error) {
-                updateStatus(false);
-            }
-        }
-
-        function updateStatus(isHealthy) {
-            const badge = document.getElementById('statusBadge');
-            if (isHealthy) {
-                badge.className = 'status-badge success';
-                badge.innerHTML = '<span class="dot"></span> Connected';
-            } else {
-                badge.className = 'status-badge error';
-                badge.innerHTML = '<span class="dot"></span> API Key Missing';
-            }
+                document.getElementById('statusBadge').innerHTML = data.api_configured ? 
+                    '<span class="dot"></span> Connected' : '<span class="dot"></span> API Missing';
+            } catch (error) {}
         }
 
         async function sendMessage() {
             const input = document.getElementById('messageInput');
             const message = input.value.trim();
-            
             if (!message || isTyping) return;
             
-            // Clear input and disable
             input.value = '';
             input.disabled = true;
             document.getElementById('sendBtn').disabled = true;
             isTyping = true;
             
-            // Remove welcome screen
             const welcome = document.querySelector('.welcome-screen');
             if (welcome) welcome.remove();
             
-            // Add user message
             addMessage(message, 'user');
-            
-            // Add typing indicator
             const typingId = addTypingIndicator();
             
             try {
                 const response = await fetch(`${API_URL}/chat`, {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({ 
-                        message: message,
-                        session_id: sessionId
-                    })
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message, session_id: sessionId })
                 });
-                
                 const data = await response.json();
-                
-                // Remove typing indicator
                 removeTypingIndicator(typingId);
-                
-                if (data.error) {
-                    addMessage('❌ Error: ' + data.error, 'assistant');
-                } else {
-                    addMessage(data.response, 'assistant', data.timestamp);
-                }
+                addMessage(data.error ? '❌ ' + data.error : data.response, 'assistant');
             } catch (error) {
                 removeTypingIndicator(typingId);
-                addMessage('❌ Error: Failed to get response. Please check your connection.', 'assistant');
+                addMessage('❌ Connection error', 'assistant');
             }
             
-            // Re-enable input
             input.disabled = false;
             document.getElementById('sendBtn').disabled = false;
             isTyping = false;
             input.focus();
         }
 
-        function addMessage(text, type, timestamp = null) {
+        function addMessage(text, type) {
             const messages = document.getElementById('messages');
-            
-            const messageDiv = document.createElement('div');
-            messageDiv.className = `message ${type}`;
-            
-            const avatar = document.createElement('div');
-            avatar.className = 'avatar';
-            avatar.textContent = type === 'user' ? '👤' : '🪰';
-            
-            const content = document.createElement('div');
-            content.className = 'message-content';
-            
-            // Format text with basic markdown-like rendering
-            const formattedText = formatText(text);
-            content.innerHTML = formattedText;
-            
-            if (timestamp) {
-                const meta = document.createElement('div');
-                meta.className = 'message-meta';
-                meta.textContent = new Date(timestamp).toLocaleTimeString();
-                content.appendChild(meta);
-            }
-            
-            messageDiv.appendChild(avatar);
-            messageDiv.appendChild(content);
-            
-            messages.appendChild(messageDiv);
+            const msg = document.createElement('div');
+            msg.className = `message ${type}`;
+            msg.innerHTML = `
+                <div class="avatar">${type === 'user' ? '👤' : '🪰'}</div>
+                <div class="message-content">${formatText(text)}</div>
+            `;
+            messages.appendChild(msg);
             messages.scrollTop = messages.scrollHeight;
         }
 
         function formatText(text) {
-            // Basic formatting for better readability
             return text
                 .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-                .replace(/\*(.*?)\*/g, '<em>$1</em>')
                 .replace(/\n/g, '<br>')
-                .replace(/(https?:\/\/[^\s]+)/g, '<a href="$1" target="_blank" style="color: var(--primary);">$1</a>');
+                .replace(/(https?:\/\/[^\s]+)/g, '<a href="$1" target="_blank" style="color: var(--primary); text-decoration: underline;">$1</a>');
         }
 
         function addTypingIndicator() {
-            const messages = document.getElementById('messages');
             const id = 'typing_' + Date.now();
-            
-            const messageDiv = document.createElement('div');
-            messageDiv.id = id;
-            messageDiv.className = 'message assistant';
-            messageDiv.innerHTML = `
+            const messages = document.getElementById('messages');
+            const msg = document.createElement('div');
+            msg.id = id;
+            msg.className = 'message assistant';
+            msg.innerHTML = `
                 <div class="avatar">🪰</div>
                 <div class="message-content">
-                    <div class="typing-indicator">
-                        <span></span>
-                        <span></span>
-                        <span></span>
-                    </div>
+                    <div class="typing-indicator"><span></span><span></span><span></span></div>
                 </div>
             `;
-            
-            messages.appendChild(messageDiv);
+            messages.appendChild(msg);
             messages.scrollTop = messages.scrollHeight;
-            
             return id;
         }
 
         function removeTypingIndicator(id) {
-            const indicator = document.getElementById(id);
-            if (indicator) indicator.remove();
+            const el = document.getElementById(id);
+            if (el) el.remove();
         }
 
         async function resetConversation() {
-            if (!confirm('Start a new conversation? Current history will be cleared.')) {
-                return;
-            }
-            
+            if (!confirm('Clear conversation?')) return;
             try {
                 await fetch(`${API_URL}/reset`, {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ session_id: sessionId })
                 });
-                
-                const messages = document.getElementById('messages');
-                messages.innerHTML = `
+                document.getElementById('messages').innerHTML = `
                     <div class="welcome-screen">
                         <div class="icon">🪰</div>
-                        <h2>New Conversation Started</h2>
-                        <p>Ask me anything about Drosophila research!</p>
+                        <h2>New Conversation</h2>
+                        <p>Ask anything!</p>
                     </div>
                 `;
-            } catch (error) {
-                alert('Failed to reset conversation');
-            }
+            } catch (error) {}
         }
 
         async function exportConversation() {
             try {
                 const response = await fetch(`${API_URL}/export`, {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ session_id: sessionId })
                 });
-                
                 const data = await response.json();
-                
-                if (data.error) {
-                    alert(data.error);
-                    return;
-                }
-                
+                if (data.error) { alert(data.error); return; }
                 document.getElementById('exportText').value = data.markdown;
                 document.getElementById('exportModal').classList.add('active');
-                
-            } catch (error) {
-                alert('Failed to export conversation');
-            }
+            } catch (error) {}
         }
 
         function downloadExport() {
@@ -888,51 +505,31 @@
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `drosophila_conversation_${new Date().toISOString().slice(0,10)}.md`;
+            a.download = `drosophila_${new Date().toISOString().slice(0,10)}.md`;
             a.click();
             URL.revokeObjectURL(url);
         }
 
         function copyExport() {
-            const text = document.getElementById('exportText').value;
-            navigator.clipboard.writeText(text).then(() => {
-                alert('Copied to clipboard!');
-            });
+            navigator.clipboard.writeText(document.getElementById('exportText').value);
+            alert('Copied!');
         }
 
-        function closeModal(modalId) {
-            document.getElementById(modalId).classList.remove('active');
+        function closeModal(id) {
+            document.getElementById(id).classList.remove('active');
         }
 
-        function showAbout() {
-            document.getElementById('aboutModal').classList.add('active');
-        }
-
-        function toggleSidebar() {
-            const sidebar = document.querySelector('.sidebar');
-            sidebar.style.display = sidebar.style.display === 'none' ? 'flex' : 'none';
-        }
-
-        function sendExample(text) {
-            document.getElementById('messageInput').value = text;
-            sendMessage();
-        }
-
-        function handleKeyPress(event) {
-            if (event.key === 'Enter' && !event.shiftKey) {
-                event.preventDefault();
+        function handleKeyPress(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
                 sendMessage();
             }
         }
 
-        // Close modals when clicking outside
-        window.onclick = function(event) {
-            if (event.target.classList.contains('modal')) {
-                event.target.classList.remove('active');
-            }
+        window.onclick = (e) => {
+            if (e.target.classList.contains('modal')) e.target.classList.remove('active');
         }
 
-        // Initialize
         checkHealth();
         document.getElementById('messageInput').focus();
     </script>
