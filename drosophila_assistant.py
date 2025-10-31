@@ -2,6 +2,8 @@ import anthropic
 import os
 from Bio import Entrez
 import json
+import requests
+from typing import Optional, Dict, List
 
 # Configure Entrez (PubMed API)
 Entrez.email = "jordanszt@icloud.com"  # Required by NCBI
@@ -101,6 +103,19 @@ class DrosophilaAssistant:
             papers = self.search_pubmed(user_message)
             publication_context = self.format_papers_for_claude(papers)
         
+        # Check if query mentions specific genes - search FlyBase
+        flybase_context = ""
+        gene_keywords = ['gene', 'protein', 'mutant', 'allele', 'what is', 'tell me about', 'function']
+        if any(keyword in user_message.lower() for keyword in gene_keywords):
+            print("Searching FlyBase for gene information...")
+            potential_genes = self.extract_gene_names(user_message)
+            
+            for gene in potential_genes:
+                gene_info = self.search_flybase(gene)
+                if gene_info:
+                    flybase_context += self.format_flybase_info(gene_info)
+                    break  # Only get info for first valid gene found
+        
         # Build the system prompt
         system_prompt = """You are a specialized AI assistant for Drosophila melanogaster (fruit fly) research. 
 
@@ -117,13 +132,20 @@ IMPORTANT: When publications are provided, you MUST:
 3. List the paper titles and authors when referencing them
 4. Create a "References" section at the end with all cited papers
 
+When FlyBase gene information is provided:
+1. Use the official gene symbol and FlyBase ID (FBgn)
+2. Include the FlyBase link for reference
+3. Mention synonyms if relevant to help users find the gene
+
 Always provide accurate scientific information and acknowledge uncertainty when appropriate.
 Use clear scientific language but explain complex concepts when needed."""
 
-        # Add publication context to the user message if available
+        # Add publication context and FlyBase context to the user message if available
         enhanced_message = user_message
+        if flybase_context:
+            enhanced_message = f"{user_message}\n\n{flybase_context}"
         if publication_context:
-            enhanced_message = f"{user_message}\n\n{publication_context}"
+            enhanced_message = f"{enhanced_message}\n\n{publication_context}"
         
         # Add to conversation history
         self.conversation_history.append({
@@ -152,6 +174,120 @@ Use clear scientific language but explain complex concepts when needed."""
     def reset_conversation(self):
         """Clear conversation history"""
         self.conversation_history = []
+    
+    def search_flybase(self, gene_name: str) -> Optional[Dict]:
+        """Search FlyBase for gene information"""
+        try:
+            # FlyBase API endpoint
+            base_url = "https://api.flybase.org/api/v1.0"
+            
+            # Search for gene by symbol or name
+            search_url = f"{base_url}/gene/symbol/{gene_name}"
+            
+            response = requests.get(search_url, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                
+                # Extract key information
+                gene_info = {
+                    'symbol': data.get('symbol', gene_name),
+                    'name': data.get('name', 'Unknown'),
+                    'fbgn': data.get('FBgn', 'Unknown'),
+                    'summary': data.get('automated_gene_summary', 'No summary available'),
+                    'synonyms': data.get('synonyms', []),
+                    'url': f"https://flybase.org/reports/{data.get('FBgn', '')}"
+                }
+                
+                return gene_info
+            else:
+                # Try autocomplete search as fallback
+                autocomplete_url = f"{base_url}/autocomplete?query={gene_name}"
+                response = requests.get(autocomplete_url, timeout=10)
+                
+                if response.status_code == 200:
+                    results = response.json()
+                    if results and len(results) > 0:
+                        # Get first match
+                        first_match = results[0]
+                        fbgn = first_match.get('id', '')
+                        
+                        if fbgn:
+                            # Fetch full gene details
+                            gene_url = f"{base_url}/gene/{fbgn}"
+                            gene_response = requests.get(gene_url, timeout=10)
+                            
+                            if gene_response.status_code == 200:
+                                data = gene_response.json()
+                                gene_info = {
+                                    'symbol': data.get('symbol', gene_name),
+                                    'name': data.get('name', 'Unknown'),
+                                    'fbgn': fbgn,
+                                    'summary': data.get('automated_gene_summary', 'No summary available'),
+                                    'synonyms': data.get('synonyms', []),
+                                    'url': f"https://flybase.org/reports/{fbgn}"
+                                }
+                                return gene_info
+                
+                return None
+                
+        except Exception as e:
+            print(f"Error searching FlyBase: {str(e)}")
+            return None
+    
+    def format_flybase_info(self, gene_info: Dict) -> str:
+        """Format FlyBase gene information for Claude"""
+        if not gene_info:
+            return ""
+        
+        formatted = f"\n--- FlyBase Information ---\n"
+        formatted += f"Gene Symbol: {gene_info['symbol']}\n"
+        formatted += f"Full Name: {gene_info['name']}\n"
+        formatted += f"FlyBase ID: {gene_info['fbgn']}\n"
+        
+        if gene_info.get('synonyms'):
+            synonyms = ', '.join(gene_info['synonyms'][:5])  # Show first 5
+            formatted += f"Synonyms: {synonyms}\n"
+        
+        formatted += f"Summary: {gene_info['summary']}\n"
+        formatted += f"FlyBase Link: {gene_info['url']}\n"
+        formatted += "---\n\n"
+        
+        return formatted
+    
+    def extract_gene_names(self, text: str) -> List[str]:
+        """Extract potential gene names from user query"""
+        # Common Drosophila gene patterns
+        import re
+        
+        # Look for common gene name patterns
+        # Italicized or capitalized gene names
+        potential_genes = []
+        
+        # Pattern 1: Words in context that might be genes
+        words = text.split()
+        for word in words:
+            # Remove punctuation
+            clean_word = word.strip('.,!?;:()[]{}"\'-')
+            
+            # Drosophila genes often:
+            # - Start with lowercase (wingless, notch)
+            # - Have mixed case (Notch, Delta)
+            # - Are short (2-5 letters common)
+            if len(clean_word) >= 2:
+                potential_genes.append(clean_word)
+        
+        # Pattern 2: Look for "gene X" patterns
+        gene_pattern = r'gene\s+(\w+)|(\w+)\s+gene'
+        matches = re.findall(gene_pattern, text, re.IGNORECASE)
+        for match in matches:
+            gene = match[0] or match[1]
+            if gene:
+                potential_genes.append(gene)
+        
+        # Return unique genes (limit to first 3 to avoid too many API calls)
+        unique_genes = list(dict.fromkeys(potential_genes))
+        return unique_genes[:3]
 
 
 # Example usage
