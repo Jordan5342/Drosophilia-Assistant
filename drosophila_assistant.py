@@ -11,7 +11,7 @@ class DrosophilaAssistant:
         self.client = anthropic.Anthropic(api_key=api_key)
         self.conversation_history = []
         
-    def search_pubmed(self, query, max_results=5):
+    def search_pubmed(self, query, max_results=10):
         """Search PubMed for Drosophila-related papers"""
         try:
             # Add Drosophila to the search query
@@ -83,7 +83,7 @@ class DrosophilaAssistant:
             formatted += f"Year: {paper['year']}\n"
             formatted += f"PMID: {paper['pmid']}\n"
             formatted += f"URL: {paper['url']}\n"
-            formatted += f"Abstract: {paper['abstract'][:500]}...\n\n"
+            formatted += f"Abstract: {paper['abstract']}\n\n"
         
         return formatted
     
@@ -91,7 +91,8 @@ class DrosophilaAssistant:
         """Chat with Claude, optionally searching publications first"""
         
         # Check if the query seems to need publication search
-        search_keywords = ['paper', 'study', 'research', 'publication', 'gene', 'protein', 'pathway', 'mutation']
+        search_keywords = ['paper', 'study', 'research', 'publication', 'gene', 'protein', 'pathway', 'mutation', 
+                          'find', 'recent', 'what', 'how', 'development', 'signaling', 'regulation']
         should_search = search_publications and any(keyword in user_message.lower() for keyword in search_keywords)
         
         publication_context = ""
@@ -110,7 +111,12 @@ Your expertise includes:
 - Classic and modern Drosophila studies
 - Comparative biology and model organism research
 
-When publications are provided, cite them appropriately using PMID numbers. 
+IMPORTANT: When publications are provided, you MUST:
+1. Cite each paper with its PMID number in your answer
+2. Include the full PubMed URL for each paper mentioned: https://pubmed.ncbi.nlm.nih.gov/PMID/
+3. List the paper titles and authors when referencing them
+4. Create a "References" section at the end with all cited papers
+
 Always provide accurate scientific information and acknowledge uncertainty when appropriate.
 Use clear scientific language but explain complex concepts when needed."""
 
