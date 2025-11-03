@@ -33,6 +33,8 @@ class DrosophilaAssistant:
                 print("  ℹ️  No PubMed results found")
                 return []
             
+            print(f"  📥 Fetching {len(id_list)} papers...")
+            
             # Fetch details for each paper
             handle = Entrez.efetch(db="pubmed", id=id_list, rettype="abstract", retmode="xml")
             records = Entrez.read(handle)
@@ -77,11 +79,11 @@ class DrosophilaAssistant:
                     print(f"  ⚠️  Error parsing article: {e}")
                     continue
             
-            print(f"  ✅ Found {len(papers)} papers")
+            print(f"  ✅ Successfully retrieved {len(papers)} papers")
             return papers
             
         except Exception as e:
-            print(f"  ❌ Error searching PubMed: {str(e)}")
+            print(f"  ❌ PubMed search error: {str(e)}")
             return []
     
     def format_papers_for_claude(self, papers):
@@ -242,11 +244,18 @@ class DrosophilaAssistant:
         
         # ALWAYS search PubMed for relevant papers
         print("📚 Searching PubMed for relevant research...")
-        papers = self.search_pubmed(user_message, max_results=5)
+        papers = self.search_pubmed(user_message, max_results=8)
         if papers:
             publication_context = self.format_papers_for_claude(papers)
         else:
             print("  ℹ️  No recent papers found for this query")
+            # Tell Claude explicitly that no papers were found
+            publication_context = "\n" + "="*70 + "\n"
+            publication_context += "PUBMED SEARCH RESULT\n"
+            publication_context += "="*70 + "\n\n"
+            publication_context += "No recent publications were found in PubMed for this specific query.\n"
+            publication_context += "You may answer from your knowledge base and note that no recent papers were found.\n"
+            publication_context += "\n" + "="*70 + "\n"
         
         # ALWAYS try to extract and search for genes on FlyBase
         print("🧬 Checking for gene mentions...")
@@ -272,57 +281,47 @@ Your expertise includes:
 - Classic and modern Drosophila studies
 - Developmental biology and signaling pathways
 
-IMPORTANT: For EVERY user query, you will receive:
-1. Recent PubMed publications about the topic (if available)
-2. FlyBase gene information (if genes are mentioned)
-
-These searches happen automatically - you don't need to explain that you're searching.
+IMPORTANT: For EVERY user query, the system automatically searches:
+1. PubMed for recent publications
+2. FlyBase for gene information
 
 CRITICAL FORMATTING INSTRUCTIONS:
 
 **NEVER use HTML tags in your response.** Always use Markdown formatting:
-
-1. For links: Use [Link Text](URL) format
-   - Example: [View on FlyBase](https://flybase.org/reports/FBgn123)
-   - Example: [Smith et al., 2024](https://pubmed.ncbi.nlm.nih.gov/12345/)
-
-2. For emphasis: Use **bold** for important terms
-
-3. For line breaks: Just use normal paragraph breaks
-
-WRONG (Don't do this):
-<a href="url" target="_blank">Link</a>
-
-CORRECT (Do this):
-[Link Text](url)
+- For links: Use [Link Text](URL) format
+- For emphasis: Use **bold** for important terms
 
 CITATION INSTRUCTIONS:
 
-1. When PubMed publications are provided (marked by "RELEVANT PUBLICATIONS"):
-   - ALWAYS reference papers in your answer
-   - Use markdown links: [Author et al., Year](URL)
+**IF you see "RELEVANT PUBLICATIONS FROM PUBMED" with papers listed:**
+   ✅ This means papers WERE found - you MUST cite them!
+   - Reference papers throughout your answer
+   - Use markdown links: [Author et al., Year](URL)  
    - Create a "References" section at the end
-   - Format: "Author et al. (Year). Title. PMID: 12345. [View on PubMed](URL)"
+   - Format: "1. Author et al. (Year). Title. PMID: 12345. [View on PubMed](URL)"
+   - Synthesize information from the papers
+   - DO NOT say you don't have access to papers!
 
-2. When FlyBase gene information is provided (marked by "FLYBASE GENE INFORMATION"):
-   - Use the official gene symbol and FlyBase ID
-   - Include the FlyBase link: [View on FlyBase](URL)
-   - Mention synonyms if helpful
-
-3. If searches return no results:
+**IF you see "No publications found" or no PUBLICATIONS section:**
+   ❌ Papers were not found
    - Answer from your knowledge base
-   - Mention no recent papers were found
-   - Suggest alternative search terms
+   - Briefly note: "No recent papers were found on this specific query in PubMed"
+   - Continue with your expert knowledge
+   - Suggest alternative search terms if relevant
 
-4. Always provide comprehensive answers that:
-   - Synthesize information from papers
-   - Explain biological context
-   - Connect concepts across papers
-   - Highlight key findings and authors
+**IF you see "FLYBASE GENE INFORMATION":**
+   - Use the official gene symbol and FlyBase ID
+   - Include link: [View on FlyBase](URL)
+   - Cite the official information provided
 
-Remember: Use ONLY Markdown formatting [text](url), NEVER HTML tags!
+**General Guidelines:**
+- Be confident when citing papers that ARE provided
+- Don't claim lack of access if papers ARE in the context
+- If papers are provided, they are recent and relevant - use them!
+- Synthesize across multiple papers when available
+- Always be accurate and acknowledge true uncertainty
 
-Always be accurate, acknowledge uncertainty, and provide clear scientific explanations."""
+Remember: If papers are in your context window between the PUBLICATIONS markers, you DO have access to them - cite them confidently!"""
 
         # Build enhanced message
         enhanced_message = user_message
