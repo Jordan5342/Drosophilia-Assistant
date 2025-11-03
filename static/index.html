@@ -33,7 +33,7 @@
         .container {
             max-width: 100%;
             margin: 0;
-            background: #FAF9F6;
+            background: var(--bg-light-tan);
             box-shadow: var(--shadow-lg);
             overflow: hidden;
             display: flex;
@@ -185,11 +185,41 @@
             max-width: 75%;
             padding: 16px 20px;
             border-radius: 12px;
-            line-height: 1.6;
+            line-height: 1.7;
             overflow-wrap: break-word;
             word-wrap: break-word;
             overflow-y: auto;
             max-height: 600px;
+        }
+        
+        .message-content a {
+            color: inherit;
+            text-decoration: underline;
+            font-weight: 500;
+            transition: opacity 0.2s;
+        }
+        
+        .message-content a:hover {
+            opacity: 0.7;
+        }
+        
+        .message-content strong {
+            font-weight: 600;
+            color: var(--text-dark);
+        }
+        
+        .message-content code {
+            background: rgba(0,0,0,0.1);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 0.9em;
+        }
+        
+        .message-content br + br {
+            content: "";
+            display: block;
+            margin: 8px 0;
         }
 
         .message-content::-webkit-scrollbar {
@@ -224,6 +254,13 @@
         .typing-indicator {
             display: flex;
             gap: 6px;
+            align-items: center;
+        }
+        
+        .typing-indicator .status-text {
+            font-size: 12px;
+            color: var(--text-gray);
+            margin-right: 8px;
         }
 
         .typing-indicator span {
@@ -383,8 +420,8 @@
                     <button class="btn-icon" onclick="resetConversation()" title="Reset">🔄</button>
                 </div>
                 <div class="input-wrapper">
-                    <textarea id="messageInput" placeholder="Ask about Drosophila research..." onkeydown="handleKeyPress(event)"></textarea>
-                    <button class="btn-send" id="sendBtn" onclick="sendMessage()">Send 📤</button>
+                    <textarea id="messageInput" placeholder="Ask about genes, search papers, or explore Drosophila research..." onkeydown="handleKeyPress(event)"></textarea>
+                    <button class="btn-send" id="sendBtn" onclick="sendMessage()">🔍 Search</button>
                 </div>
             </div>
         </div>
@@ -456,6 +493,15 @@
         }
 
         function addMessage(text, type) {
+            // Filter out messages that are only technical markers
+            const cleanText = text.replace(/\*\*\*flybase\s*/gi, '')
+                                  .replace(/\*\*\*search\s*/gi, '')
+                                  .replace(/\*\*\*/g, '')
+                                  .trim();
+            
+            // Don't add empty messages
+            if (!cleanText) return;
+            
             const messages = document.getElementById('messages');
             const msg = document.createElement('div');
             msg.className = `message ${type}`;
@@ -468,11 +514,28 @@
         }
 
         function formatText(text) {
-            return text
-                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-                .replace(/\n/g, '<br>')
-                .replace(/(https?:\/\/[^\s]+)/g, '<a href="$1" target="_blank" style="color: var(--primary); text-decoration: underline;">$1</a>');
+            // Filter out technical markers
+            text = text.replace(/\*\*\*flybase\s*/gi, '');
+            text = text.replace(/\*\*\*search\s*/gi, '');
+            text = text.replace(/\*\*\*/g, '');
+            
+            // Format markdown-style links [text](url)
+            text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" style="color: var(--primary); text-decoration: underline; font-weight: 500;">$1</a>');
+            
+            // Format bold text
+            text = text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+            
+            // Format line breaks - preserve double breaks for paragraphs
+            text = text.replace(/\n\n/g, '<!--PARA-->');
+            text = text.replace(/\n/g, '<br>');
+            text = text.replace(/<!--PARA-->/g, '<br><br>');
+            
+            // Format plain URLs
+            text = text.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" style="color: var(--primary); text-decoration: underline;">$1</a>');
+            
+            return text;
         }
+        
 
         function addTypingIndicator() {
             const id = 'typing_' + Date.now();
@@ -483,7 +546,10 @@
             msg.innerHTML = `
                 <div class="avatar">🪰</div>
                 <div class="message-content">
-                    <div class="typing-indicator"><span></span><span></span><span></span></div>
+                    <div class="typing-indicator">
+                        <span class="status-text">Searching databases...</span>
+                        <span></span><span></span><span></span>
+                    </div>
                 </div>
             `;
             messages.appendChild(msg);

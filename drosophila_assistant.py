@@ -220,26 +220,15 @@ class DrosophilaAssistant:
         return unique_genes[:2]
     
     def should_search_pubmed(self, message: str) -> bool:
-        """Determine if we should search PubMed"""
-        search_keywords = [
-            'paper', 'papers', 'study', 'studies', 'research', 'publication', 
-            'publications', 'recent', 'find papers', 'literature', 'review',
-            'what research', 'studies on', 'published', 'article', 'articles',
-            'evidence', 'data', 'findings', 'experiments', 'experimental'
-        ]
-        
-        message_lower = message.lower()
-        return any(keyword in message_lower for keyword in search_keywords)
+        """Determine if we should search PubMed - Always return True"""
+        # Always search PubMed for every query to find relevant research
+        return True
     
     def should_search_flybase(self, message: str) -> bool:
-        """Determine if we should search FlyBase"""
-        gene_keywords = [
-            'gene', 'genes', 'what is', 'tell me about', 'function of', 
-            'protein', 'mutant', 'mutation', 'allele', 'locus', 'chromosome'
-        ]
-        
-        message_lower = message.lower()
-        return any(keyword in message_lower for keyword in gene_keywords)
+        """Determine if we should search FlyBase - Search if message contains potential gene names"""
+        # Always try to extract and search for genes
+        # FlyBase will return nothing if no genes found, which is fine
+        return True
     
     def chat(self, user_message):
         """Chat with Claude, searching PubMed and FlyBase as needed"""
@@ -251,25 +240,27 @@ class DrosophilaAssistant:
         publication_context = ""
         flybase_context = ""
         
-        # Search PubMed if needed
-        if self.should_search_pubmed(user_message):
-            print("📚 Searching PubMed...")
-            papers = self.search_pubmed(user_message, max_results=5)
-            if papers:
-                publication_context = self.format_papers_for_claude(papers)
+        # ALWAYS search PubMed for relevant papers
+        print("📚 Searching PubMed for relevant research...")
+        papers = self.search_pubmed(user_message, max_results=5)
+        if papers:
+            publication_context = self.format_papers_for_claude(papers)
+        else:
+            print("  ℹ️  No recent papers found for this query")
         
-        # Search FlyBase if needed
-        if self.should_search_flybase(user_message):
-            print("🧬 Searching FlyBase...")
-            potential_genes = self.extract_gene_names(user_message)
-            
-            if potential_genes:
-                print(f"  Potential genes: {potential_genes}")
-                for gene in potential_genes:
-                    gene_info = self.search_flybase(gene)
-                    if gene_info:
-                        flybase_context += self.format_flybase_info(gene_info)
-                        break  # Only use first successful match
+        # ALWAYS try to extract and search for genes on FlyBase
+        print("🧬 Checking for gene mentions...")
+        potential_genes = self.extract_gene_names(user_message)
+        
+        if potential_genes:
+            print(f"  Potential genes detected: {potential_genes}")
+            for gene in potential_genes:
+                gene_info = self.search_flybase(gene)
+                if gene_info:
+                    flybase_context += self.format_flybase_info(gene_info)
+                    break  # Only use first successful match
+        else:
+            print("  ℹ️  No specific gene names detected")
         
         # Build system prompt
         system_prompt = """You are a specialized AI assistant for Drosophila melanogaster (fruit fly) research.
@@ -281,23 +272,36 @@ Your expertise includes:
 - Classic and modern Drosophila studies
 - Developmental biology and signaling pathways
 
+IMPORTANT: For EVERY user query, you will receive:
+1. Recent PubMed publications about the topic (if available)
+2. FlyBase gene information (if genes are mentioned)
+
+These searches happen automatically - you don't need to explain that you're searching.
+
 CRITICAL INSTRUCTIONS FOR CITING SOURCES:
 
 1. When PubMed publications are provided (marked by "RELEVANT PUBLICATIONS"):
-   - Reference papers naturally in your answer
-   - ALWAYS include clickable links using markdown: [Author et al., Year](URL)
-   - Create a "References" section at the end
+   - ALWAYS reference papers in your answer
+   - Include clickable links using markdown: [Author et al., Year](URL)
+   - Create a "References" section at the end with all cited papers
    - Format each reference as: "Author et al. (Year). Title. PMID: 12345. [View on PubMed](URL)"
+   - Synthesize information from multiple papers
 
 2. When FlyBase gene information is provided (marked by "FLYBASE GENE INFORMATION"):
    - Use the official gene symbol and FlyBase ID
    - Include the FlyBase link as: [View on FlyBase](URL)
    - Mention synonyms if they help clarify
 
-3. If NO external data is provided:
+3. If searches return no results:
    - Answer from your knowledge base
-   - Be clear that information is from your training data
-   - Suggest they could search for recent papers if relevant
+   - Mention that no recent papers were found (if PubMed returned nothing)
+   - Suggest the topic might be under-researched or use different terminology
+
+4. Always provide comprehensive answers that:
+   - Synthesize information from papers
+   - Explain biological context
+   - Connect concepts across papers
+   - Highlight key findings and authors
 
 Always be accurate, acknowledge uncertainty, and provide clear scientific explanations."""
 
