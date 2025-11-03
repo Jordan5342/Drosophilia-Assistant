@@ -4,6 +4,7 @@ from Bio import Entrez
 import json
 import requests
 from typing import Optional, Dict, List
+import re
 
 # Configure Entrez (PubMed API)
 Entrez.email = "jordanszt@icloud.com"  # Required by NCBI
@@ -13,11 +14,13 @@ class DrosophilaAssistant:
         self.client = anthropic.Anthropic(api_key=api_key)
         self.conversation_history = []
         
-    def search_pubmed(self, query, max_results=10):
+    def search_pubmed(self, query, max_results=5):
         """Search PubMed for Drosophila-related papers"""
         try:
             # Add Drosophila to the search query
             full_query = f"Drosophila AND ({query})"
+            
+            print(f"  🔍 PubMed query: {full_query}")
             
             # Search PubMed
             handle = Entrez.esearch(db="pubmed", term=full_query, retmax=max_results, sort="relevance")
@@ -27,7 +30,8 @@ class DrosophilaAssistant:
             id_list = record["IdList"]
             
             if not id_list:
-                return "No publications found."
+                print("  ℹ️  No PubMed results found")
+                return []
             
             # Fetch details for each paper
             handle = Entrez.efetch(db="pubmed", id=id_list, rettype="abstract", retmode="xml")
@@ -52,106 +56,268 @@ class DrosophilaAssistant:
                                 authors.append(f"{author.get('LastName', '')} {author.get('Initials', '')}")
                     
                     pmid = medline['PMID']
-                    year = article_data.get('ArticleDate', [{}])[0].get('Year', 'N/A') if article_data.get('ArticleDate') else \
-                           medline.get('DateCompleted', {}).get('Year', 'N/A')
+                    
+                    # Get year from multiple possible locations
+                    year = 'N/A'
+                    if 'ArticleDate' in article_data and article_data['ArticleDate']:
+                        year = article_data['ArticleDate'][0].get('Year', 'N/A')
+                    elif 'Journal' in article_data and 'JournalIssue' in article_data['Journal']:
+                        pub_date = article_data['Journal']['JournalIssue'].get('PubDate', {})
+                        year = pub_date.get('Year', 'N/A')
                     
                     papers.append({
                         'title': title,
                         'authors': ', '.join(authors) + ' et al.' if authors else 'Unknown authors',
-                        'abstract': abstract,
+                        'abstract': abstract[:500] + '...' if len(abstract) > 500 else abstract,
                         'pmid': str(pmid),
                         'year': year,
                         'url': f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
                     })
                 except Exception as e:
-                    print(f"Error parsing article: {e}")
+                    print(f"  ⚠️  Error parsing article: {e}")
                     continue
             
+            print(f"  ✅ Found {len(papers)} papers")
             return papers
             
         except Exception as e:
-            return f"Error searching PubMed: {str(e)}"
+            print(f"  ❌ Error searching PubMed: {str(e)}")
+            return []
     
     def format_papers_for_claude(self, papers):
         """Format papers into a readable string for Claude"""
-        if isinstance(papers, str):
-            return papers
+        if not papers:
+            return ""
         
-        formatted = "Here are relevant publications from PubMed:\n\n"
+        formatted = "\n" + "="*70 + "\n"
+        formatted += "RELEVANT PUBLICATIONS FROM PUBMED\n"
+        formatted += "="*70 + "\n\n"
+        
         for i, paper in enumerate(papers, 1):
-            formatted += f"Paper {i}:\n"
+            formatted += f"📄 Paper {i}:\n"
             formatted += f"Title: {paper['title']}\n"
             formatted += f"Authors: {paper['authors']}\n"
             formatted += f"Year: {paper['year']}\n"
             formatted += f"PMID: {paper['pmid']}\n"
             formatted += f"URL: {paper['url']}\n"
-            formatted += f"Abstract: {paper['abstract']}\n\n"
+            formatted += f"Abstract: {paper['abstract']}\n"
+            formatted += "\n" + "-"*70 + "\n\n"
+        
+        formatted += "="*70 + "\n"
+        formatted += "END OF PUBLICATIONS\n"
+        formatted += "="*70 + "\n\n"
+        return formatted
+    
+    def search_flybase(self, gene_name: str) -> Optional[Dict]:
+        """Search FlyBase for gene information"""
+        try:
+            # Clean up gene name
+            gene_name = gene_name.strip().lower()
+            
+            print(f"  🔍 FlyBase lookup: {gene_name}")
+            
+            # Try FlyBase lookup service
+            lookup_url = f"https://flybase.org/api/v1.0/genes/autocomplete?query={gene_name}"
+            
+            response = requests.get(lookup_url, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                
+                if data and len(data) > 0:
+                    # Get first match
+                    first_match = data[0]
+                    
+                    fbgn = first_match.get('id', '')
+                    symbol = first_match.get('symbol', gene_name)
+                    name = first_match.get('name', 'Unknown')
+                    
+                    gene_info = {
+                        'symbol': symbol,
+                        'name': name,
+                        'fbgn': fbgn,
+                        'summary': f"Gene symbol: {symbol}. This is a Drosophila gene.",
+                        'synonyms': first_match.get('synonyms', []),
+                        'url': f"https://flybase.org/reports/{fbgn}"
+                    }
+                    
+                    print(f"  ✅ Found: {symbol} ({fbgn})")
+                    return gene_info
+                else:
+                    print(f"  ℹ️  No FlyBase results for '{gene_name}'")
+            
+            return None
+                
+        except Exception as e:
+            print(f"  ❌ Error searching FlyBase: {str(e)}")
+            return None
+    
+    def format_flybase_info(self, gene_info: Dict) -> str:
+        """Format FlyBase gene information for Claude"""
+        if not gene_info:
+            return ""
+        
+        formatted = "\n" + "="*70 + "\n"
+        formatted += "FLYBASE GENE INFORMATION\n"
+        formatted += "="*70 + "\n\n"
+        
+        formatted += f"🧬 Gene Symbol: {gene_info['symbol']}\n"
+        formatted += f"Full Name: {gene_info['name']}\n"
+        formatted += f"FlyBase ID: {gene_info['fbgn']}\n"
+        
+        if gene_info.get('synonyms'):
+            synonyms = ', '.join(gene_info['synonyms'][:5])
+            formatted += f"Synonyms: {synonyms}\n"
+        
+        formatted += f"\nFlyBase Link: {gene_info['url']}\n"
+        
+        formatted += "\n" + "="*70 + "\n"
+        formatted += "END OF FLYBASE INFO\n"
+        formatted += "="*70 + "\n\n"
         
         return formatted
     
-    def chat(self, user_message, search_publications=True):
-        """Chat with Claude, optionally searching publications first"""
+    def extract_gene_names(self, text: str) -> List[str]:
+        """Extract potential gene names from user query"""
+        potential_genes = []
         
-        # Check if the query seems to need publication search
-        search_keywords = ['paper', 'study', 'research', 'publication', 'gene', 'protein', 'pathway', 'mutation', 
-                          'find', 'recent', 'what', 'how', 'development', 'signaling', 'regulation']
-        should_search = search_publications and any(keyword in user_message.lower() for keyword in search_keywords)
+        # Pattern 1: "gene X" or "X gene"
+        gene_pattern = r'(?:gene\s+(\w+)|(\w+)\s+gene)'
+        matches = re.findall(gene_pattern, text, re.IGNORECASE)
+        for match in matches:
+            gene = match[0] or match[1]
+            if gene and gene.lower() not in ['the', 'a', 'this', 'that', 'my', 'your']:
+                potential_genes.append(gene)
+        
+        # Pattern 2: "what is X" where X might be a gene
+        what_pattern = r'what\s+(?:is|does)\s+(\w+)'
+        matches = re.findall(what_pattern, text, re.IGNORECASE)
+        for match in matches:
+            if match.lower() not in ['the', 'a', 'this', 'that', 'it']:
+                potential_genes.append(match)
+        
+        # Pattern 3: "tell me about X"
+        tell_pattern = r'(?:tell me about|about)\s+(\w+)'
+        matches = re.findall(tell_pattern, text, re.IGNORECASE)
+        for match in matches:
+            if match.lower() not in ['the', 'a', 'this', 'that']:
+                potential_genes.append(match)
+        
+        # Pattern 4: Common Drosophila genes mentioned directly
+        common_genes = ['notch', 'delta', 'wingless', 'hedgehog', 'decapentaplegic', 
+                       'engrailed', 'even-skipped', 'fushi-tarazu', 'white', 'yellow',
+                       'sevenless', 'bride', 'boss', 'torpedo', 'gurken', 'oskar',
+                       'nanos', 'pumilio', 'bicoid', 'hunchback', 'kruppel', 'giant',
+                       'knirps', 'tailless', 'gap', 'pair-rule', 'segment', 'polarity']
+        
+        text_lower = text.lower()
+        for gene in common_genes:
+            if gene in text_lower:
+                potential_genes.append(gene)
+        
+        # Return unique genes (limit to first 2 to avoid too many API calls)
+        unique_genes = list(dict.fromkeys(potential_genes))
+        return unique_genes[:2]
+    
+    def should_search_pubmed(self, message: str) -> bool:
+        """Determine if we should search PubMed"""
+        search_keywords = [
+            'paper', 'papers', 'study', 'studies', 'research', 'publication', 
+            'publications', 'recent', 'find papers', 'literature', 'review',
+            'what research', 'studies on', 'published', 'article', 'articles',
+            'evidence', 'data', 'findings', 'experiments', 'experimental'
+        ]
+        
+        message_lower = message.lower()
+        return any(keyword in message_lower for keyword in search_keywords)
+    
+    def should_search_flybase(self, message: str) -> bool:
+        """Determine if we should search FlyBase"""
+        gene_keywords = [
+            'gene', 'genes', 'what is', 'tell me about', 'function of', 
+            'protein', 'mutant', 'mutation', 'allele', 'locus', 'chromosome'
+        ]
+        
+        message_lower = message.lower()
+        return any(keyword in message_lower for keyword in gene_keywords)
+    
+    def chat(self, user_message):
+        """Chat with Claude, searching PubMed and FlyBase as needed"""
+        
+        print(f"\n{'='*70}")
+        print(f"User query: {user_message[:100]}...")
+        print(f"{'='*70}")
         
         publication_context = ""
-        if should_search:
-            print("Searching PubMed for relevant publications...")
-            papers = self.search_pubmed(user_message)
-            publication_context = self.format_papers_for_claude(papers)
-        
-        # Check if query mentions specific genes - search FlyBase
         flybase_context = ""
-        gene_keywords = ['gene', 'protein', 'mutant', 'allele', 'what is', 'tell me about', 'function']
-        if any(keyword in user_message.lower() for keyword in gene_keywords):
-            print("Searching FlyBase for gene information...")
+        
+        # Search PubMed if needed
+        if self.should_search_pubmed(user_message):
+            print("📚 Searching PubMed...")
+            papers = self.search_pubmed(user_message, max_results=5)
+            if papers:
+                publication_context = self.format_papers_for_claude(papers)
+        
+        # Search FlyBase if needed
+        if self.should_search_flybase(user_message):
+            print("🧬 Searching FlyBase...")
             potential_genes = self.extract_gene_names(user_message)
             
-            for gene in potential_genes:
-                gene_info = self.search_flybase(gene)
-                if gene_info:
-                    flybase_context += self.format_flybase_info(gene_info)
-                    break  # Only get info for first valid gene found
+            if potential_genes:
+                print(f"  Potential genes: {potential_genes}")
+                for gene in potential_genes:
+                    gene_info = self.search_flybase(gene)
+                    if gene_info:
+                        flybase_context += self.format_flybase_info(gene_info)
+                        break  # Only use first successful match
         
-        # Build the system prompt
-        system_prompt = """You are a specialized AI assistant for Drosophila melanogaster (fruit fly) research. 
+        # Build system prompt
+        system_prompt = """You are a specialized AI assistant for Drosophila melanogaster (fruit fly) research.
 
 Your expertise includes:
 - Drosophila genetics, development, and molecular biology
 - Gene nomenclature and function
 - Experimental techniques in fly research
 - Classic and modern Drosophila studies
-- Comparative biology and model organism research
+- Developmental biology and signaling pathways
 
-IMPORTANT: When publications are provided, you MUST:
-1. Cite each paper with its PMID number in your answer
-2. Include the full PubMed URL for each paper mentioned: https://pubmed.ncbi.nlm.nih.gov/PMID/
-3. List the paper titles and authors when referencing them
-4. Create a "References" section at the end with all cited papers
+CRITICAL INSTRUCTIONS FOR CITING SOURCES:
 
-When FlyBase gene information is provided:
-1. Use the official gene symbol and FlyBase ID (FBgn)
-2. Include the FlyBase link for reference
-3. Mention synonyms if relevant to help users find the gene
+1. When PubMed publications are provided (marked by "RELEVANT PUBLICATIONS"):
+   - Reference papers naturally in your answer
+   - ALWAYS include clickable links using markdown: [Author et al., Year](URL)
+   - Create a "References" section at the end
+   - Format each reference as: "Author et al. (Year). Title. PMID: 12345. [View on PubMed](URL)"
 
-Always provide accurate scientific information and acknowledge uncertainty when appropriate.
-Use clear scientific language but explain complex concepts when needed."""
+2. When FlyBase gene information is provided (marked by "FLYBASE GENE INFORMATION"):
+   - Use the official gene symbol and FlyBase ID
+   - Include the FlyBase link as: [View on FlyBase](URL)
+   - Mention synonyms if they help clarify
 
-        # Add publication context and FlyBase context to the user message if available
+3. If NO external data is provided:
+   - Answer from your knowledge base
+   - Be clear that information is from your training data
+   - Suggest they could search for recent papers if relevant
+
+Always be accurate, acknowledge uncertainty, and provide clear scientific explanations."""
+
+        # Build enhanced message
         enhanced_message = user_message
-        if flybase_context:
-            enhanced_message = f"{user_message}\n\n{flybase_context}"
-        if publication_context:
-            enhanced_message = f"{enhanced_message}\n\n{publication_context}"
+        
+        if publication_context or flybase_context:
+            enhanced_message = f"{user_message}\n\n"
+            if flybase_context:
+                enhanced_message += flybase_context
+            if publication_context:
+                enhanced_message += publication_context
         
         # Add to conversation history
         self.conversation_history.append({
             "role": "user",
             "content": enhanced_message
         })
+        
+        print("🤖 Calling Claude API...")
         
         # Call Claude API
         response = self.client.messages.create(
@@ -163,163 +329,18 @@ Use clear scientific language but explain complex concepts when needed."""
         
         assistant_message = response.content[0].text
         
-        # Add response to history
+        # Add response to history (without the extra context)
         self.conversation_history.append({
             "role": "assistant",
             "content": assistant_message
         })
+        
+        print("✅ Response generated")
+        print(f"{'='*70}\n")
         
         return assistant_message
     
     def reset_conversation(self):
         """Clear conversation history"""
         self.conversation_history = []
-    
-    def search_flybase(self, gene_name: str) -> Optional[Dict]:
-        """Search FlyBase for gene information"""
-        try:
-            # FlyBase API endpoint
-            base_url = "https://api.flybase.org/api/v1.0"
-            
-            # Search for gene by symbol or name
-            search_url = f"{base_url}/gene/symbol/{gene_name}"
-            
-            response = requests.get(search_url, timeout=10)
-            
-            if response.status_code == 200:
-                data = response.json()
-                
-                # Extract key information
-                gene_info = {
-                    'symbol': data.get('symbol', gene_name),
-                    'name': data.get('name', 'Unknown'),
-                    'fbgn': data.get('FBgn', 'Unknown'),
-                    'summary': data.get('automated_gene_summary', 'No summary available'),
-                    'synonyms': data.get('synonyms', []),
-                    'url': f"https://flybase.org/reports/{data.get('FBgn', '')}"
-                }
-                
-                return gene_info
-            else:
-                # Try autocomplete search as fallback
-                autocomplete_url = f"{base_url}/autocomplete?query={gene_name}"
-                response = requests.get(autocomplete_url, timeout=10)
-                
-                if response.status_code == 200:
-                    results = response.json()
-                    if results and len(results) > 0:
-                        # Get first match
-                        first_match = results[0]
-                        fbgn = first_match.get('id', '')
-                        
-                        if fbgn:
-                            # Fetch full gene details
-                            gene_url = f"{base_url}/gene/{fbgn}"
-                            gene_response = requests.get(gene_url, timeout=10)
-                            
-                            if gene_response.status_code == 200:
-                                data = gene_response.json()
-                                gene_info = {
-                                    'symbol': data.get('symbol', gene_name),
-                                    'name': data.get('name', 'Unknown'),
-                                    'fbgn': fbgn,
-                                    'summary': data.get('automated_gene_summary', 'No summary available'),
-                                    'synonyms': data.get('synonyms', []),
-                                    'url': f"https://flybase.org/reports/{fbgn}"
-                                }
-                                return gene_info
-                
-                return None
-                
-        except Exception as e:
-            print(f"Error searching FlyBase: {str(e)}")
-            return None
-    
-    def format_flybase_info(self, gene_info: Dict) -> str:
-        """Format FlyBase gene information for Claude"""
-        if not gene_info:
-            return ""
-        
-        formatted = f"\n--- FlyBase Information ---\n"
-        formatted += f"Gene Symbol: {gene_info['symbol']}\n"
-        formatted += f"Full Name: {gene_info['name']}\n"
-        formatted += f"FlyBase ID: {gene_info['fbgn']}\n"
-        
-        if gene_info.get('synonyms'):
-            synonyms = ', '.join(gene_info['synonyms'][:5])  # Show first 5
-            formatted += f"Synonyms: {synonyms}\n"
-        
-        formatted += f"Summary: {gene_info['summary']}\n"
-        formatted += f"FlyBase Link: {gene_info['url']}\n"
-        formatted += "---\n\n"
-        
-        return formatted
-    
-    def extract_gene_names(self, text: str) -> List[str]:
-        """Extract potential gene names from user query"""
-        # Common Drosophila gene patterns
-        import re
-        
-        # Look for common gene name patterns
-        # Italicized or capitalized gene names
-        potential_genes = []
-        
-        # Pattern 1: Words in context that might be genes
-        words = text.split()
-        for word in words:
-            # Remove punctuation
-            clean_word = word.strip('.,!?;:()[]{}"\'-')
-            
-            # Drosophila genes often:
-            # - Start with lowercase (wingless, notch)
-            # - Have mixed case (Notch, Delta)
-            # - Are short (2-5 letters common)
-            if len(clean_word) >= 2:
-                potential_genes.append(clean_word)
-        
-        # Pattern 2: Look for "gene X" patterns
-        gene_pattern = r'gene\s+(\w+)|(\w+)\s+gene'
-        matches = re.findall(gene_pattern, text, re.IGNORECASE)
-        for match in matches:
-            gene = match[0] or match[1]
-            if gene:
-                potential_genes.append(gene)
-        
-        # Return unique genes (limit to first 3 to avoid too many API calls)
-        unique_genes = list(dict.fromkeys(potential_genes))
-        return unique_genes[:3]
-
-
-# Example usage
-if __name__ == "__main__":
-    # Get API key from environment variable
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    
-    if not api_key:
-        print("Please set ANTHROPIC_API_KEY environment variable")
-        exit(1)
-    
-    assistant = DrosophilaAssistant(api_key)
-    
-    print("Drosophila Research Assistant")
-    print("=" * 50)
-    print("Ask questions about Drosophila research!")
-    print("Type 'quit' to exit, 'reset' to clear conversation\n")
-    
-    while True:
-        user_input = input("You: ").strip()
-        
-        if user_input.lower() == 'quit':
-            break
-        elif user_input.lower() == 'reset':
-            assistant.reset_conversation()
-            print("Conversation reset!\n")
-            continue
-        elif not user_input:
-            continue
-        
-        try:
-            response = assistant.chat(user_input)
-            print(f"\nAssistant: {response}\n")
-        except Exception as e:
-            print(f"Error: {str(e)}\n")
+        print("🔄 Conversation history cleared")

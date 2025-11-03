@@ -45,6 +45,7 @@ def chat():
         })
     
     except Exception as e:
+        print(f"Error in chat endpoint: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/reset', methods=['POST'])
@@ -57,6 +58,7 @@ def reset():
             conversations[session_id].reset_conversation()
         
         return jsonify({'status': 'success'})
+    
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -112,9 +114,13 @@ if __name__ == '__main__':
     print("🪰 Drosophila Research Assistant")
     print("="*60)
     print(f"\n✓ Server starting on http://localhost:{port}")
+    print("\n💡 Features:")
+    print("  📚 PubMed literature search")
+    print("  🧬 FlyBase gene lookup")
+    print("  🤖 Claude AI integration")
     print("\n💡 Tips:")
     print("  • Open the URL in your browser")
-    print("  • Share with colleagues - they just need the link!")
+    print("  • Ask about genes, papers, or research topics")
     print("  • Press Ctrl+C to stop\n")
     
     app.run(host='0.0.0.0', port=port, debug=False)
