@@ -514,10 +514,23 @@
         }
 
         function formatText(text) {
+            // First, check if the text already contains HTML tags from the backend
+            // If it does, we should render it as-is but still clean up markers
+            
             // Filter out technical markers
             text = text.replace(/\*\*\*flybase\s*/gi, '');
             text = text.replace(/\*\*\*search\s*/gi, '');
             text = text.replace(/\*\*\*/g, '');
+            
+            // If text already contains HTML tags (like <a href or target="_blank"), 
+            // just clean it up and return - don't double-process
+            if (text.includes('target="_blank"') || text.includes('<a href=')) {
+                // Already has HTML, just fix any escaped characters
+                text = text.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
+                return text;
+            }
+            
+            // Otherwise, process markdown-style formatting
             
             // Format markdown-style links [text](url)
             text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" style="color: var(--primary); text-decoration: underline; font-weight: 500;">$1</a>');
@@ -530,8 +543,8 @@
             text = text.replace(/\n/g, '<br>');
             text = text.replace(/<!--PARA-->/g, '<br><br>');
             
-            // Format plain URLs
-            text = text.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" style="color: var(--primary); text-decoration: underline;">$1</a>');
+            // Format plain URLs (only if not already in an anchor tag)
+            text = text.replace(/(?<!href="|">)(https?:\/\/[^\s<]+)(?!<\/a>)/g, '<a href="$1" target="_blank" style="color: var(--primary); text-decoration: underline;">$1</a>');
             
             return text;
         }
