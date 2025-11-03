@@ -123,35 +123,55 @@ class DrosophilaAssistant:
             
             response = requests.get(lookup_url, timeout=10)
             
-            if response.status_code == 200:
+            # Check if response is valid
+            if response.status_code != 200:
+                print(f"  ℹ️  FlyBase returned status {response.status_code} for '{gene_name}'")
+                return None
+            
+            # Check if response has content
+            if not response.text or response.text.strip() == '':
+                print(f"  ℹ️  '{gene_name}' not found in FlyBase (empty response)")
+                return None
+            
+            # Try to parse JSON
+            try:
                 data = response.json()
+            except ValueError:
+                print(f"  ℹ️  '{gene_name}' not found in FlyBase (invalid response)")
+                return None
+            
+            if data and len(data) > 0:
+                # Get first match
+                first_match = data[0]
                 
-                if data and len(data) > 0:
-                    # Get first match
-                    first_match = data[0]
-                    
-                    fbgn = first_match.get('id', '')
-                    symbol = first_match.get('symbol', gene_name)
-                    name = first_match.get('name', 'Unknown')
-                    
-                    gene_info = {
-                        'symbol': symbol,
-                        'name': name,
-                        'fbgn': fbgn,
-                        'summary': f"Gene symbol: {symbol}. This is a Drosophila gene.",
-                        'synonyms': first_match.get('synonyms', []),
-                        'url': f"https://flybase.org/reports/{fbgn}"
-                    }
-                    
-                    print(f"  ✅ Found: {symbol} ({fbgn})")
-                    return gene_info
-                else:
-                    print(f"  ℹ️  No FlyBase results for '{gene_name}'")
+                fbgn = first_match.get('id', '')
+                symbol = first_match.get('symbol', gene_name)
+                name = first_match.get('name', 'Unknown')
+                
+                gene_info = {
+                    'symbol': symbol,
+                    'name': name,
+                    'fbgn': fbgn,
+                    'summary': f"Gene symbol: {symbol}. This is a Drosophila gene.",
+                    'synonyms': first_match.get('synonyms', []),
+                    'url': f"https://flybase.org/reports/{fbgn}"
+                }
+                
+                print(f"  ✅ Found: {symbol} ({fbgn})")
+                return gene_info
+            else:
+                print(f"  ℹ️  '{gene_name}' not found in FlyBase")
             
             return None
                 
+        except requests.exceptions.Timeout:
+            print(f"  ⚠️  FlyBase request timed out")
+            return None
+        except requests.exceptions.RequestException as e:
+            print(f"  ⚠️  FlyBase connection error")
+            return None
         except Exception as e:
-            print(f"  ❌ Error searching FlyBase: {str(e)}")
+            print(f"  ℹ️  Could not look up '{gene_name}' in FlyBase")
             return None
     
     def format_flybase_info(self, gene_info: Dict) -> str:
@@ -183,26 +203,39 @@ class DrosophilaAssistant:
         """Extract potential gene names from user query"""
         potential_genes = []
         
+        # Words to exclude (common words that aren't genes)
+        exclude_words = {
+            'aging', 'gene', 'genes', 'protein', 'proteins', 'the', 'a', 'an', 
+            'this', 'that', 'what', 'how', 'why', 'when', 'where', 'who',
+            'is', 'are', 'was', 'were', 'be', 'been', 'being',
+            'do', 'does', 'did', 'have', 'has', 'had',
+            'can', 'could', 'will', 'would', 'should', 'may', 'might',
+            'tell', 'find', 'show', 'give', 'make', 'take',
+            'top', 'best', 'most', 'many', 'some', 'all',
+            'development', 'signaling', 'pathway', 'function', 'role',
+            'cancer', 'tumor', 'mutation', 'mutant', 'allele'
+        }
+        
         # Pattern 1: "gene X" or "X gene"
         gene_pattern = r'(?:gene\s+(\w+)|(\w+)\s+gene)'
         matches = re.findall(gene_pattern, text, re.IGNORECASE)
         for match in matches:
             gene = match[0] or match[1]
-            if gene and gene.lower() not in ['the', 'a', 'this', 'that', 'my', 'your']:
+            if gene and gene.lower() not in exclude_words:
                 potential_genes.append(gene)
         
         # Pattern 2: "what is X" where X might be a gene
         what_pattern = r'what\s+(?:is|does)\s+(\w+)'
         matches = re.findall(what_pattern, text, re.IGNORECASE)
         for match in matches:
-            if match.lower() not in ['the', 'a', 'this', 'that', 'it']:
+            if match.lower() not in exclude_words:
                 potential_genes.append(match)
         
         # Pattern 3: "tell me about X"
         tell_pattern = r'(?:tell me about|about)\s+(\w+)'
         matches = re.findall(tell_pattern, text, re.IGNORECASE)
         for match in matches:
-            if match.lower() not in ['the', 'a', 'this', 'that']:
+            if match.lower() not in exclude_words:
                 potential_genes.append(match)
         
         # Pattern 4: Common Drosophila genes mentioned directly
@@ -210,7 +243,9 @@ class DrosophilaAssistant:
                        'engrailed', 'even-skipped', 'fushi-tarazu', 'white', 'yellow',
                        'sevenless', 'bride', 'boss', 'torpedo', 'gurken', 'oskar',
                        'nanos', 'pumilio', 'bicoid', 'hunchback', 'kruppel', 'giant',
-                       'knirps', 'tailless', 'gap', 'pair-rule', 'segment', 'polarity']
+                       'knirps', 'tailless', 'p53', 'ras', 'myc', 'src', 'abl',
+                       'inr', 'dfoxo', 'foxo', 'sir2', 'rpd3', 'mth', 'methuselah',
+                       'sod', 'catalase', 'tor', 'pten', 'pi3k', 'akt']
         
         text_lower = text.lower()
         for gene in common_genes:
@@ -218,7 +253,14 @@ class DrosophilaAssistant:
                 potential_genes.append(gene)
         
         # Return unique genes (limit to first 2 to avoid too many API calls)
-        unique_genes = list(dict.fromkeys(potential_genes))
+        unique_genes = []
+        seen = set()
+        for gene in potential_genes:
+            gene_lower = gene.lower()
+            if gene_lower not in seen and gene_lower not in exclude_words:
+                unique_genes.append(gene)
+                seen.add(gene_lower)
+        
         return unique_genes[:2]
     
     def should_search_pubmed(self, message: str) -> bool:
