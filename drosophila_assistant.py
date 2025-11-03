@@ -14,12 +14,67 @@ class DrosophilaAssistant:
         self.client = anthropic.Anthropic(api_key=api_key)
         self.conversation_history = []
         
+    def reformulate_query_for_pubmed(self, user_query: str) -> str:
+        """Reformulate user queries to be better PubMed search terms"""
+        query_lower = user_query.lower()
+        
+        # Detect topic-specific queries and reformulate
+        
+        # Aging-related queries
+        if any(term in query_lower for term in ['aging', 'lifespan', 'longevity', 'age']):
+            if 'gene' in query_lower or 'top' in query_lower or 'list' in query_lower:
+                return 'aging longevity lifespan extension genes mechanisms'
+        
+        # Cancer-related queries
+        if any(term in query_lower for term in ['cancer', 'tumor', 'oncogene']):
+            if 'gene' in query_lower or 'top' in query_lower:
+                return 'cancer tumor oncogene tumor suppressor development'
+        
+        # Development queries
+        if 'development' in query_lower and 'gene' in query_lower:
+            return 'development embryogenesis morphogenesis patterning'
+        
+        # Signaling pathway queries
+        if 'signaling' in query_lower or 'pathway' in query_lower:
+            return query_lower.replace('signaling', 'signal transduction').replace('pathway', 'signaling cascade')
+        
+        # Remove meta-language that doesn't help PubMed
+        cleaned = query_lower
+        meta_terms = ['give me', 'show me', 'tell me about', 'find', 'search', 
+                      'what are', 'what is', 'list', 'with papers', 'and flybase',
+                      'can you', 'please', 'i want', 'i need']
+        
+        for term in meta_terms:
+            cleaned = cleaned.replace(term, '')
+        
+        # Replace "top N" or "best N" with more searchable terms
+        cleaned = re.sub(r'top \d+', 'important major', cleaned)
+        cleaned = re.sub(r'best \d+', 'key major', cleaned)
+        cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+        
+        # If cleaned query is too short, use topic-based default
+        if len(cleaned) < 5:
+            if 'aging' in query_lower:
+                return 'aging longevity lifespan genes'
+            elif 'cancer' in query_lower:
+                return 'cancer tumor oncogene genes'
+            elif 'development' in query_lower:
+                return 'development genes embryogenesis'
+            else:
+                return 'genes molecular function'
+        
+        return cleaned
+        
     def search_pubmed(self, query, max_results=5):
         """Search PubMed for Drosophila-related papers"""
         try:
-            # Add Drosophila to the search query
-            full_query = f"Drosophila AND ({query})"
+            # Reformulate query for better PubMed results
+            reformulated = self.reformulate_query_for_pubmed(query)
             
+            # Add Drosophila to the search query
+            full_query = f"Drosophila AND ({reformulated})"
+            
+            print(f"  🔍 Original: {query[:60]}...")
             print(f"  🔍 PubMed query: {full_query}")
             
             # Search PubMed
