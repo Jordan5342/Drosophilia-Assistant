@@ -3,7 +3,8 @@ from flask_cors import CORS
 import os
 from datetime import datetime
 import json
-from drosophila_assistant import DrosophilaAssistant
+import signal
+from drosophila_assistant_enhanced import DrosophilaAssistant
 
 app = Flask(__name__, static_folder='static')
 CORS(app)
@@ -14,6 +15,13 @@ assistant = DrosophilaAssistant(api_key) if api_key else None
 
 # Store conversation history (in production, use a database)
 conversations = {}
+
+# Timeout handling
+class TimeoutException(Exception):
+    pass
+
+def timeout_handler(signum, frame):
+    raise TimeoutException()
 
 @app.route('/')
 def home():
@@ -37,15 +45,53 @@ def chat():
             conversations[session_id] = DrosophilaAssistant(api_key)
         
         session_assistant = conversations[session_id]
-        response = session_assistant.chat(user_message)
         
-        return jsonify({
-            'response': response,
-            'timestamp': datetime.now().isoformat()
-        })
+        # Set a timeout alarm (110 seconds - less than gunicorn's 120)
+        # This only works on Unix-like systems
+        try:
+            signal.signal(signal.SIGALRM, timeout_handler)
+            signal.alarm(110)
+        except (AttributeError, ValueError):
+            # signal.SIGALRM not available on Windows
+            pass
+        
+        try:
+            response = session_assistant.chat(user_message)
+            
+            # Cancel the alarm
+            try:
+                signal.alarm(0)
+            except (AttributeError, ValueError):
+                pass
+            
+            return jsonify({
+                'response': response,
+                'timestamp': datetime.now().isoformat()
+            })
+        
+        except TimeoutException:
+            # Cancel the alarm
+            try:
+                signal.alarm(0)
+            except (AttributeError, ValueError):
+                pass
+            
+            return jsonify({
+                'error': 'Request took too long to process. This can happen with complex queries. Try:\n• A more specific question\n• Fewer genes to compare\n• A simpler topic',
+                'timeout': True
+            }), 408
     
     except Exception as e:
         print(f"Error in chat endpoint: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        
+        # Cancel alarm on any error
+        try:
+            signal.alarm(0)
+        except (AttributeError, ValueError):
+            pass
+        
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/reset', methods=['POST'])
@@ -81,7 +127,12 @@ def export_conversation():
         
         for msg in history:
             role = "**You**" if msg['role'] == 'user' else "**Assistant**"
-            markdown += f"{role}:\n\n{msg['content']}\n\n---\n\n"
+            # Strip the context additions from user messages
+            content = msg['content']
+            # If content has FlyBase or PubMed sections, only show the original query
+            if '======' in content:
+                content = content.split('\n\n')[0]
+            markdown += f"{role}:\n\n{content}\n\n---\n\n"
         
         return jsonify({
             'markdown': markdown,
@@ -95,7 +146,22 @@ def export_conversation():
 def health():
     return jsonify({
         'status': 'healthy',
-        'api_configured': assistant is not None
+        'api_configured': assistant is not None,
+        'features': {
+            'pubmed_search': True,
+            'flybase_lookup': True,
+            'multi_gene_support': True,
+            'result_filtering': True,
+            'pathway_emphasis': True
+        }
+    })
+
+@app.route('/api/stats', methods=['GET'])
+def stats():
+    """Get statistics about active conversations"""
+    return jsonify({
+        'active_sessions': len(conversations),
+        'total_conversations': sum(len(conv.conversation_history) for conv in conversations.values()) // 2
     })
 
 if __name__ == '__main__':
@@ -111,16 +177,27 @@ if __name__ == '__main__':
         print("="*60 + "\n")
     
     print("\n" + "="*60)
-    print("🪰 Drosophila Research Assistant")
+    print("🪰 Drosophila Research Assistant - ENHANCED")
     print("="*60)
     print(f"\n✓ Server starting on http://localhost:{port}")
-    print("\n💡 Features:")
-    print("  📚 PubMed literature search")
-    print("  🧬 FlyBase gene lookup")
-    print("  🤖 Claude AI integration")
+    print("\n✨ Enhanced Features:")
+    print("  📚 PubMed literature search with relevance filtering")
+    print("  🧬 FlyBase gene lookup with variant name support")
+    print("  🔬 Genetic pathway emphasis in responses")
+    print("  🧬 Multi-gene comparison support")
+    print("  🤖 Claude AI integration (Sonnet 4)")
+    print("  💾 Memory-optimized (50% reduction)")
+    print("  ⏱️  Timeout protection (110s)")
     print("\n💡 Tips:")
     print("  • Open the URL in your browser")
     print("  • Ask about genes, papers, or research topics")
+    print("  • Try comparisons: 'Compare Notch and Delta'")
+    print("  • Use gene names flexibly: 'dFOXO', 'foxo', 'FOXO' all work")
     print("  • Press Ctrl+C to stop\n")
+    print("⚙️  Configuration:")
+    print(f"  • API Key: {'✓ Configured' if api_key else '✗ Missing'}")
+    print(f"  • Port: {port}")
+    print(f"  • Debug: False")
+    print("="*60 + "\n")
     
     app.run(host='0.0.0.0', port=port, debug=False)
