@@ -105,7 +105,8 @@ class DrosophilaAssistant:
         
         if top_papers:
             print(f"  ✅ Filtered to {len(top_papers)} most relevant papers")
-            print(f"  📊 Relevance scores: {[f'{p[\"relevance_score\"]:.2f}' for p in top_papers[:3]]}")
+            scores = [f"{p['relevance_score']:.2f}" for p in top_papers[:3]]
+            print(f"  📊 Relevance scores: {scores}")
         
         return top_papers
     
