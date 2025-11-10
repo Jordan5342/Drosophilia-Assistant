@@ -14,6 +14,28 @@ class DrosophilaAssistant:
         self.client = anthropic.Anthropic(api_key=api_key)
         self.conversation_history = []
         
+    def determine_paper_count(self, user_query: str) -> int:
+        """Determine optimal number of papers based on query type"""
+        query_lower = user_query.lower()
+        
+        # Broad/review queries need more papers
+        broad_indicators = ['top', 'list', 'overview', 'review', 'genes in', 'pathways', 
+                           'mechanisms', 'role of', 'involved in', 'best', 'major']
+        
+        # Specific queries need fewer papers
+        specific_indicators = ['what is', 'tell me about', 'how does', 'function of']
+        
+        # Check for broad query
+        if any(indicator in query_lower for indicator in broad_indicators):
+            return 12  # More papers for broad topics
+        
+        # Check for specific query
+        if any(indicator in query_lower for indicator in specific_indicators):
+            return 6  # Fewer papers for specific questions
+        
+        # Default: moderate
+        return 8
+    
     def reformulate_query_for_pubmed(self, user_query: str) -> str:
         """Use Claude to reformulate user queries into optimal PubMed search terms"""
         try:
@@ -130,7 +152,7 @@ Output ONLY the search keywords, nothing else.""",
                     papers.append({
                         'title': title,
                         'authors': ', '.join(authors) + ' et al.' if authors else 'Unknown authors',
-                        'abstract': abstract[:500] + '...' if len(abstract) > 500 else abstract,
+                        'abstract': abstract[:800] + '...' if len(abstract) > 800 else abstract,
                         'pmid': str(pmid),
                         'year': year,
                         'url': f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
@@ -346,7 +368,9 @@ Output ONLY the search keywords, nothing else.""",
         
         # ALWAYS search PubMed for relevant papers
         print("📚 Searching PubMed for relevant research...")
-        papers = self.search_pubmed(user_message, max_results=8)
+        num_papers = self.determine_paper_count(user_message)
+        print(f"  📊 Retrieving {num_papers} papers based on query type...")
+        papers = self.search_pubmed(user_message, max_results=num_papers)
         if papers:
             publication_context = self.format_papers_for_claude(papers)
         else:
