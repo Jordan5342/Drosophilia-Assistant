@@ -4,7 +4,7 @@ import os
 from datetime import datetime
 import json
 import signal
-from drosophila_assistant_enhanced import DrosophilaAssistant
+from drosophila_assistant import DrosophilaAssistant
 
 app = Flask(__name__, static_folder='static')
 CORS(app)
