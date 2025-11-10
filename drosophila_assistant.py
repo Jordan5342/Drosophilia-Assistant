@@ -83,136 +83,8 @@ class DrosophilaAssistant:
         return formatted
     
     def should_generate_figure(self, query: str) -> bool:
-        """Determine if query would benefit from a custom figure specification"""
-        query_lower = query.lower()
-        
-        # Generate figures for visual/mechanistic queries
-        figure_triggers = [
-            'pathway', 'signaling', 'mechanism', 'how does', 'process',
-            'development', 'stages', 'workflow', 'experiment', 'protocol',
-            'structure', 'organization', 'regulation', 'cascade', 'circuit'
-        ]
-        
-        # Don't generate for simple factual queries
-        exclude_triggers = [
-            'what is the definition', 'when was', 'who discovered',
-            'how many', 'list all', 'what are the names'
-        ]
-        
-        # Check if query matches figure triggers
-        has_trigger = any(trigger in query_lower for trigger in figure_triggers)
-        has_exclusion = any(exclude in query_lower for exclude in exclude_triggers)
-        
-        return has_trigger and not has_exclusion
-    
-    def generate_figure_specification(self, topic: str) -> Optional[Dict]:
-        """Use Claude API to generate a detailed BioRender figure specification"""
-        try:
-            print(f"  🎨 Generating custom figure specification...")
-            
-            response = self.client.messages.create(
-                model="claude-sonnet-4-20250514",
-                max_tokens=2000,
-                temperature=0.3,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": f"""You are an expert at creating detailed specifications for scientific figures about Drosophila research.
-
-Given this research topic: "{topic}"
-
-Create a detailed BioRender figure specification in JSON format. Think about what visual elements would best communicate this biological concept.
-
-Your response MUST be ONLY valid JSON with this exact structure (no other text):
-
-{{
-  "figureTitle": "Descriptive title for the figure",
-  "figureType": "pathway diagram/developmental stages/experimental workflow/cellular mechanism/gene regulation",
-  "mainComponents": [
-    {{
-      "element": "Name of biological element",
-      "description": "What to show",
-      "location": "where in figure",
-      "style": "visual notes"
-    }}
-  ],
-  "interactions": [
-    {{
-      "from": "element A",
-      "to": "element B", 
-      "type": "activation/inhibition/binding/etc",
-      "label": "what it means"
-    }}
-  ],
-  "colorScheme": {{
-    "primary": "suggested color theme",
-    "notes": "color usage explanation"
-  }},
-  "bioRenderElements": [
-    "Specific BioRender icons to search for"
-  ],
-  "layoutSuggestion": "Description of optimal layout",
-  "stepByStepInstructions": [
-    "Step 1: ...",
-    "Step 2: ...",
-    "Step 3: ..."
-  ]
-}}
-
-DO NOT include markdown, backticks, or explanatory text. Output ONLY the JSON object."""
-                    }
-                ]
-            )
-            
-            response_text = response.content[0].text.strip()
-            
-            # Strip markdown code blocks if present
-            response_text = response_text.replace('```json\n', '').replace('```json', '').replace('```\n', '').replace('```', '').strip()
-            
-            spec = json.loads(response_text)
-            
-            print(f"  ✅ Figure specification generated: {spec.get('figureTitle', 'Untitled')}")
-            return spec
-            
-        except Exception as e:
-            print(f"  ⚠️  Error generating figure specification: {e}")
-            return None
-    
-    def format_figure_spec_for_claude(self, spec: Dict) -> str:
-        """Format figure specification into readable text for Claude"""
-        if not spec:
-            return ""
-        
-        formatted = "\n" + "="*70 + "\n"
-        formatted += "🎨 CUSTOM FIGURE SPECIFICATION\n"
-        formatted += "="*70 + "\n\n"
-        
-        formatted += f"**Figure Title**: {spec.get('figureTitle', 'Untitled')}\n"
-        formatted += f"**Figure Type**: {spec.get('figureType', 'N/A')}\n\n"
-        
-        if spec.get('mainComponents'):
-            formatted += "**Main Components**:\n"
-            for comp in spec['mainComponents']:
-                formatted += f"  • {comp.get('element', 'N/A')}: {comp.get('description', 'N/A')}\n"
-        
-        if spec.get('bioRenderElements'):
-            formatted += "\n**BioRender Elements to Use**:\n"
-            for elem in spec['bioRenderElements'][:5]:  # Limit to 5
-                formatted += f"  • Search for: \"{elem}\"\n"
-        
-        if spec.get('layoutSuggestion'):
-            formatted += f"\n**Layout**: {spec['layoutSuggestion']}\n"
-        
-        if spec.get('stepByStepInstructions'):
-            formatted += "\n**Step-by-Step Instructions**:\n"
-            for i, step in enumerate(spec['stepByStepInstructions'][:6], 1):
-                formatted += f"  {i}. {step}\n"
-        
-        formatted += "\n" + "="*70 + "\n"
-        formatted += "END OF FIGURE SPECIFICATION\n"
-        formatted += "="*70 + "\n\n"
-        
-        return formatted
+        """DISABLED - Figure generation removed to save memory"""
+        return False
     
     def determine_paper_count(self, user_query: str) -> int:
         """Determine optimal number of papers based on query type"""
@@ -239,9 +111,11 @@ DO NOT include markdown, backticks, or explanatory text. Output ONLY the JSON ob
     def reformulate_query_for_pubmed(self, user_query: str) -> str:
         """Use Claude to reformulate user queries into optimal PubMed search terms"""
         try:
+            print(f"  🤖 Using AI to reformulate query...")
+            
             # Use Claude to intelligently reformulate the query
             response = self.client.messages.create(
-                model="claude-sonnet-4-5-20250929",
+                model="claude-sonnet-4-20250514",
                 max_tokens=150,
                 temperature=0,
                 system="""You are an expert at converting natural language questions into optimal PubMed search queries for Drosophila research.
@@ -285,6 +159,7 @@ Output ONLY the search keywords, nothing else.""",
                 print(f"  ⚠️  Claude reformulation too long, using original query")
                 return user_query
             
+            print(f"  ✅ Reformulated to: {reformulated}")
             return reformulated
             
         except Exception as e:
@@ -566,7 +441,6 @@ Output ONLY the search keywords, nothing else.""",
         publication_context = ""
         flybase_context = ""
         biorender_context = ""
-        figure_spec_context = ""
         
         # ALWAYS search PubMed for relevant papers
         print("📚 Searching PubMed for relevant research...")
@@ -604,13 +478,6 @@ Output ONLY the search keywords, nothing else.""",
         biorender_context = self.suggest_biorender_templates(user_message)
         if biorender_context:
             print("  ✅ BioRender templates suggested")
-        
-        # Generate custom figure specification for appropriate queries
-        if self.should_generate_figure(user_message):
-            print("🎨 Generating custom figure specification...")
-            figure_spec = self.generate_figure_specification(user_message)
-            if figure_spec:
-                figure_spec_context = self.format_figure_spec_for_claude(figure_spec)
         
         # Build system prompt
         system_prompt = """You are a specialized AI assistant for Drosophila melanogaster (fruit fly) research.
@@ -655,13 +522,6 @@ CITATION INSTRUCTIONS:
    - Include link: [View on FlyBase](URL)
    - Cite the official information provided
 
-**IF you see "CUSTOM FIGURE SPECIFICATION":**
-   - Reference the figure specification naturally in your answer
-   - Explain how the suggested figure would visualize the biological concept
-   - Include the step-by-step instructions in a "Creating a Figure" section
-   - Mention key BioRender elements that should be used
-   - Use this specification to enhance your explanation
-
 **IF you see "BIORENDER TEMPLATE SUGGESTIONS":**
    - Mention the relevant template categories naturally in your response
    - Include the BioRender links in a "Visual Resources" or "Create Figures" section
@@ -679,14 +539,12 @@ Remember: If papers are in your context window between the PUBLICATIONS markers,
         # Build enhanced message
         enhanced_message = user_message
         
-        if publication_context or flybase_context or biorender_context or figure_spec_context:
+        if publication_context or flybase_context or biorender_context:
             enhanced_message = f"{user_message}\n\n"
             if flybase_context:
                 enhanced_message += flybase_context
             if publication_context:
                 enhanced_message += publication_context
-            if figure_spec_context:
-                enhanced_message += figure_spec_context
             if biorender_context:
                 enhanced_message += biorender_context
         
@@ -696,11 +554,11 @@ Remember: If papers are in your context window between the PUBLICATIONS markers,
             "content": enhanced_message
         })
         
-        print("🤖 Calling Claude API...")
+        print("🤖 Calling Claude API for main response...")
         
         # Call Claude API
         response = self.client.messages.create(
-            model="claude-sonnet-4-5-20250929",
+            model="claude-sonnet-4-20250514",
             max_tokens=4096,
             system=system_prompt,
             messages=self.conversation_history
