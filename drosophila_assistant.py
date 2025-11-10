@@ -3,8 +3,9 @@ import os
 from Bio import Entrez
 import json
 import requests
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Tuple
 import re
+from collections import Counter
 
 # Configure Entrez (PubMed API)
 Entrez.email = "jordanszt@icloud.com"  # Required by NCBI
@@ -13,6 +14,8 @@ class DrosophilaAssistant:
     def __init__(self, api_key):
         self.client = anthropic.Anthropic(api_key=api_key)
         self.conversation_history = []
+        self.mentioned_genes = set()  # Track genes discussed in session
+        self.mentioned_pathways = set()  # Track pathways discussed
     
     def determine_paper_count(self, user_query: str) -> int:
         """Determine optimal number of papers based on query type"""
@@ -27,14 +30,99 @@ class DrosophilaAssistant:
         
         # Check for broad query
         if any(indicator in query_lower for indicator in broad_indicators):
-            return 12  # More papers for broad topics
+            return 15  # More papers for filtering
         
         # Check for specific query
         if any(indicator in query_lower for indicator in specific_indicators):
-            return 6  # Fewer papers for specific questions
+            return 8  # Fewer papers for specific questions
         
         # Default: moderate
-        return 8
+        return 10
+    
+    def calculate_relevance_score(self, paper: Dict, query_terms: List[str]) -> float:
+        """
+        Calculate relevance score for a paper based on query terms.
+        Returns score between 0 and 1.
+        """
+        title = paper.get('title', '').lower()
+        abstract = paper.get('abstract', '').lower()
+        
+        # Combine title and abstract, weight title more heavily
+        title_weight = 3.0
+        abstract_weight = 1.0
+        
+        score = 0.0
+        max_score = 0.0
+        
+        for term in query_terms:
+            term_lower = term.lower()
+            term_score = 0.0
+            
+            # Count occurrences in title (weighted more)
+            title_count = title.count(term_lower)
+            term_score += title_count * title_weight
+            
+            # Count occurrences in abstract
+            abstract_count = abstract.count(term_lower)
+            term_score += abstract_count * abstract_weight
+            
+            score += term_score
+            # Maximum possible score for this term (appearing 3 times in title, 5 in abstract)
+            max_score += (3 * title_weight + 5 * abstract_weight)
+        
+        # Normalize to 0-1 range
+        if max_score > 0:
+            return min(score / max_score, 1.0)
+        return 0.0
+    
+    def filter_and_rank_papers(self, papers: List[Dict], query: str, top_n: int = 8) -> List[Dict]:
+        """
+        Filter and rank papers by relevance, returning top N results.
+        """
+        if not papers:
+            return []
+        
+        # Extract key terms from query
+        query_terms = self.extract_key_terms(query)
+        
+        print(f"  🎯 Filtering with key terms: {', '.join(query_terms)}")
+        
+        # Calculate relevance score for each paper
+        scored_papers = []
+        for paper in papers:
+            score = self.calculate_relevance_score(paper, query_terms)
+            paper['relevance_score'] = score
+            scored_papers.append(paper)
+        
+        # Sort by relevance score (highest first)
+        scored_papers.sort(key=lambda x: x['relevance_score'], reverse=True)
+        
+        # Filter out very low relevance papers (score < 0.05)
+        filtered_papers = [p for p in scored_papers if p['relevance_score'] >= 0.05]
+        
+        # Return top N papers
+        top_papers = filtered_papers[:top_n]
+        
+        if top_papers:
+            print(f"  ✅ Filtered to {len(top_papers)} most relevant papers")
+            print(f"  📊 Relevance scores: {[f'{p[\"relevance_score\"]:.2f}' for p in top_papers[:3]]}")
+        
+        return top_papers
+    
+    def extract_key_terms(self, query: str) -> List[str]:
+        """Extract key scientific terms from query for relevance scoring"""
+        # Remove common stop words
+        stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
+                     'of', 'with', 'by', 'from', 'up', 'about', 'into', 'through', 'during',
+                     'what', 'which', 'who', 'when', 'where', 'why', 'how', 'is', 'are',
+                     'was', 'were', 'be', 'been', 'being', 'do', 'does', 'did', 'tell',
+                     'me', 'give', 'show', 'find', 'top', 'best', 'most'}
+        
+        # Tokenize and filter
+        words = re.findall(r'\b\w+\b', query.lower())
+        key_terms = [w for w in words if w not in stop_words and len(w) > 2]
+        
+        return key_terms
     
     def reformulate_query_for_pubmed(self, user_query: str) -> str:
         """Use Claude to reformulate user queries into optimal PubMed search terms"""
@@ -57,6 +145,7 @@ Guidelines:
 - Include relevant synonyms when helpful
 - Keep it concise - output ONLY the keywords separated by spaces
 - Focus on terms that would appear in scientific papers
+- Include pathway names and biological processes
 
 Examples:
 User: "What are the top 10 genes involved in aging?"
@@ -96,7 +185,7 @@ Output ONLY the search keywords, nothing else.""",
             return user_query
         
     def search_pubmed(self, query, max_results=5):
-        """Search PubMed for Drosophila-related papers"""
+        """Search PubMed for Drosophila-related papers with filtering"""
         try:
             # Reformulate query for better PubMed results
             reformulated = self.reformulate_query_for_pubmed(query)
@@ -107,8 +196,9 @@ Output ONLY the search keywords, nothing else.""",
             print(f"  🔍 Original: {query[:60]}...")
             print(f"  🔍 PubMed query: {full_query}")
             
-            # Search PubMed
-            handle = Entrez.esearch(db="pubmed", term=full_query, retmax=max_results, sort="relevance")
+            # Search PubMed - get more results initially for filtering
+            initial_results = max_results + 7  # Get extra papers to filter
+            handle = Entrez.esearch(db="pubmed", term=full_query, retmax=initial_results, sort="relevance")
             record = Entrez.read(handle)
             handle.close()
             
@@ -118,7 +208,7 @@ Output ONLY the search keywords, nothing else.""",
                 print("  ℹ️  No PubMed results found")
                 return []
             
-            print(f"  📥 Fetching {len(id_list)} papers...")
+            print(f"  📥 Fetching {len(id_list)} papers for filtering...")
             
             # Fetch details for each paper
             handle = Entrez.efetch(db="pubmed", id=id_list, rettype="abstract", retmode="xml")
@@ -164,8 +254,11 @@ Output ONLY the search keywords, nothing else.""",
                     print(f"  ⚠️  Error parsing article: {e}")
                     continue
             
-            print(f"  ✅ Successfully retrieved {len(papers)} papers")
-            return papers
+            # Filter and rank papers by relevance
+            filtered_papers = self.filter_and_rank_papers(papers, query, top_n=max_results)
+            
+            print(f"  ✅ Successfully retrieved {len(filtered_papers)} filtered papers")
+            return filtered_papers
             
         except Exception as e:
             print(f"  ❌ PubMed search error: {str(e)}")
@@ -181,7 +274,11 @@ Output ONLY the search keywords, nothing else.""",
         formatted += "="*70 + "\n\n"
         
         for i, paper in enumerate(papers, 1):
-            formatted += f"📄 Paper {i}:\n"
+            formatted += f"📄 Paper {i}"
+            # Add relevance score if available
+            if 'relevance_score' in paper:
+                formatted += f" (Relevance: {paper['relevance_score']:.2f})"
+            formatted += ":\n"
             formatted += f"Title: {paper['title']}\n"
             formatted += f"Authors: {paper['authors']}\n"
             formatted += f"Year: {paper['year']}\n"
@@ -195,13 +292,77 @@ Output ONLY the search keywords, nothing else.""",
         formatted += "="*70 + "\n\n"
         return formatted
     
+    def search_flybase_with_variants(self, gene_name: str) -> Optional[Dict]:
+        """
+        Search FlyBase trying multiple name variants.
+        Handles common gene name formats and synonyms.
+        """
+        # Generate variants
+        variants = self.generate_gene_name_variants(gene_name)
+        
+        print(f"  🔍 FlyBase lookup: {gene_name}")
+        if len(variants) > 1:
+            print(f"  🔄 Will try variants: {', '.join(list(variants)[:5])}")
+        
+        # Try each variant
+        for variant in variants:
+            result = self.search_flybase(variant)
+            if result:
+                return result
+        
+        print(f"  ℹ️  '{gene_name}' not found in FlyBase (tried {len(variants)} variants)")
+        return None
+    
+    def generate_gene_name_variants(self, gene_name: str) -> List[str]:
+        """
+        Generate common variants of a gene name.
+        Examples: FOXO -> foxo, Foxo, dFOXO, dfoxo
+                  p53 -> p53, dmp53, Dmp53
+        """
+        gene_name = gene_name.strip()
+        variants = [gene_name]  # Start with original
+        
+        # Lowercase version
+        variants.append(gene_name.lower())
+        
+        # Capitalized version
+        variants.append(gene_name.capitalize())
+        
+        # Uppercase version
+        variants.append(gene_name.upper())
+        
+        # Add 'd' prefix (Drosophila prefix)
+        if not gene_name.lower().startswith('d'):
+            variants.append(f"d{gene_name}")
+            variants.append(f"d{gene_name.lower()}")
+            variants.append(f"D{gene_name.lower()}")
+        
+        # Remove 'd' prefix if present
+        if gene_name.lower().startswith('d') and len(gene_name) > 1:
+            variants.append(gene_name[1:])
+            variants.append(gene_name[1:].lower())
+        
+        # Handle dashes and underscores
+        if '-' in gene_name:
+            variants.append(gene_name.replace('-', ''))
+        if '_' in gene_name:
+            variants.append(gene_name.replace('_', ''))
+        
+        # Return unique variants, prioritizing original and lowercase
+        seen = set()
+        unique_variants = []
+        for v in variants:
+            if v.lower() not in seen:
+                unique_variants.append(v)
+                seen.add(v.lower())
+        
+        return unique_variants
+    
     def search_flybase(self, gene_name: str) -> Optional[Dict]:
         """Search FlyBase for gene information"""
         try:
             # Clean up gene name
-            gene_name = gene_name.strip().lower()
-            
-            print(f"  🔍 FlyBase lookup: {gene_name}")
+            gene_name = gene_name.strip()
             
             # Try FlyBase lookup service
             lookup_url = f"https://flybase.org/api/v1.0/genes/autocomplete?query={gene_name}"
@@ -210,19 +371,16 @@ Output ONLY the search keywords, nothing else.""",
             
             # Check if response is valid
             if response.status_code != 200:
-                print(f"  ℹ️  FlyBase returned status {response.status_code} for '{gene_name}'")
                 return None
             
             # Check if response has content
             if not response.text or response.text.strip() == '':
-                print(f"  ℹ️  '{gene_name}' not found in FlyBase (empty response)")
                 return None
             
             # Try to parse JSON
             try:
                 data = response.json()
             except ValueError:
-                print(f"  ℹ️  '{gene_name}' not found in FlyBase (invalid response)")
                 return None
             
             if data and len(data) > 0:
@@ -232,6 +390,9 @@ Output ONLY the search keywords, nothing else.""",
                 fbgn = first_match.get('id', '')
                 symbol = first_match.get('symbol', gene_name)
                 name = first_match.get('name', 'Unknown')
+                
+                # Track this gene in session
+                self.mentioned_genes.add(symbol.lower())
                 
                 gene_info = {
                     'symbol': symbol,
@@ -244,19 +405,14 @@ Output ONLY the search keywords, nothing else.""",
                 
                 print(f"  ✅ Found: {symbol} ({fbgn})")
                 return gene_info
-            else:
-                print(f"  ℹ️  '{gene_name}' not found in FlyBase")
             
             return None
                 
         except requests.exceptions.Timeout:
-            print(f"  ⚠️  FlyBase request timed out")
             return None
         except requests.exceptions.RequestException as e:
-            print(f"  ⚠️  FlyBase connection error")
             return None
         except Exception as e:
-            print(f"  ℹ️  Could not look up '{gene_name}' in FlyBase")
             return None
     
     def format_flybase_info(self, gene_info: Dict) -> str:
@@ -285,7 +441,10 @@ Output ONLY the search keywords, nothing else.""",
         return formatted
     
     def extract_gene_names(self, text: str) -> List[str]:
-        """Extract potential gene names from user query"""
+        """
+        Extract potential gene names from user query.
+        Enhanced to detect multiple genes and comparison queries.
+        """
         potential_genes = []
         
         # Words to exclude (common words that aren't genes)
@@ -298,7 +457,8 @@ Output ONLY the search keywords, nothing else.""",
             'tell', 'find', 'show', 'give', 'make', 'take',
             'top', 'best', 'most', 'many', 'some', 'all',
             'development', 'signaling', 'pathway', 'function', 'role',
-            'cancer', 'tumor', 'mutation', 'mutant', 'allele'
+            'cancer', 'tumor', 'mutation', 'mutant', 'allele',
+            'compare', 'versus', 'vs', 'between', 'and', 'or'
         }
         
         # Pattern 1: "gene X" or "X gene"
@@ -323,21 +483,40 @@ Output ONLY the search keywords, nothing else.""",
             if match.lower() not in exclude_words:
                 potential_genes.append(match)
         
-        # Pattern 4: Common Drosophila genes mentioned directly
+        # Pattern 4: "compare X and Y" or "X vs Y"
+        compare_pattern = r'(?:compare|versus|vs\.?)\s+(\w+)\s+(?:and|versus|vs\.?)\s+(\w+)'
+        matches = re.findall(compare_pattern, text, re.IGNORECASE)
+        for match in matches:
+            if match[0].lower() not in exclude_words:
+                potential_genes.append(match[0])
+            if match[1].lower() not in exclude_words:
+                potential_genes.append(match[1])
+        
+        # Pattern 5: "X and Y" (only if they look like gene names)
+        and_pattern = r'\b([A-Z][a-z]+\d*)\s+and\s+([A-Z][a-z]+\d*)\b'
+        matches = re.findall(and_pattern, text)
+        for match in matches:
+            if match[0].lower() not in exclude_words:
+                potential_genes.append(match[0])
+            if match[1].lower() not in exclude_words:
+                potential_genes.append(match[1])
+        
+        # Pattern 6: Common Drosophila genes mentioned directly
         common_genes = ['notch', 'delta', 'wingless', 'hedgehog', 'decapentaplegic', 
                        'engrailed', 'even-skipped', 'fushi-tarazu', 'white', 'yellow',
                        'sevenless', 'bride', 'boss', 'torpedo', 'gurken', 'oskar',
                        'nanos', 'pumilio', 'bicoid', 'hunchback', 'kruppel', 'giant',
                        'knirps', 'tailless', 'p53', 'ras', 'myc', 'src', 'abl',
                        'inr', 'dfoxo', 'foxo', 'sir2', 'rpd3', 'mth', 'methuselah',
-                       'sod', 'catalase', 'tor', 'pten', 'pi3k', 'akt']
+                       'sod', 'catalase', 'tor', 'pten', 'pi3k', 'akt', 'dmp53',
+                       'jak', 'stat', 'egfr', 'insulin', 'dilp']
         
         text_lower = text.lower()
         for gene in common_genes:
             if gene in text_lower:
                 potential_genes.append(gene)
         
-        # Return unique genes (limit to first 2 to avoid too many API calls)
+        # Return unique genes (limit to first 5 for multi-gene queries)
         unique_genes = []
         seen = set()
         for gene in potential_genes:
@@ -346,7 +525,7 @@ Output ONLY the search keywords, nothing else.""",
                 unique_genes.append(gene)
                 seen.add(gene_lower)
         
-        return unique_genes[:2]
+        return unique_genes[:5]  # Increased from 2 to 5 for multi-gene support
     
     def chat(self, user_message):
         """Chat with Claude, searching PubMed and FlyBase as needed"""
@@ -375,21 +554,28 @@ Output ONLY the search keywords, nothing else.""",
             publication_context += "You may answer from your knowledge base and note that no recent papers were found.\n"
             publication_context += "\n" + "="*70 + "\n"
         
-        # ALWAYS try to extract and search for genes on FlyBase
+        # ALWAYS try to extract and search for genes on FlyBase (multi-gene support)
         print("🧬 Checking for gene mentions...")
         potential_genes = self.extract_gene_names(user_message)
         
         if potential_genes:
             print(f"  Potential genes detected: {potential_genes}")
+            genes_found = 0
             for gene in potential_genes:
-                gene_info = self.search_flybase(gene)
+                gene_info = self.search_flybase_with_variants(gene)
                 if gene_info:
                     flybase_context += self.format_flybase_info(gene_info)
-                    break  # Only use first successful match
+                    genes_found += 1
+                    # For comparison queries, get multiple genes
+                    if genes_found >= 3 and 'compare' not in user_message.lower():
+                        break
+            
+            if genes_found > 0:
+                print(f"  ✅ Found {genes_found} gene(s) in FlyBase")
         else:
             print("  ℹ️  No specific gene names detected")
         
-        # Build system prompt
+        # Build enhanced system prompt with genetic pathway emphasis
         system_prompt = """You are a specialized AI assistant for Drosophila melanogaster (fruit fly) research.
 
 Your expertise includes:
@@ -400,14 +586,49 @@ Your expertise includes:
 - Developmental biology and signaling pathways
 
 IMPORTANT: For EVERY user query, the system automatically searches:
-1. PubMed for recent publications
-2. FlyBase for gene information
+1. PubMed for recent publications (filtered for relevance)
+2. FlyBase for gene information (including multiple genes for comparisons)
+
+CRITICAL GENETIC PATHWAY EMPHASIS:
+
+When discussing genes and their functions, you MUST emphasize:
+
+**1. PATHWAY CONTEXT:**
+   - Identify which signaling pathway(s) the gene belongs to
+   - Describe upstream regulators and downstream targets
+   - Explain how the gene fits into the broader regulatory network
+   - Mention key pathway interactions (activators, inhibitors, feedback loops)
+
+**2. ORTHOLOGUES AND CONSERVATION:**
+   - Always mention mammalian/human orthologues when known
+   - Discuss conservation of function across species
+   - Highlight what fly research has taught us about human biology
+   - Note any differences between fly and mammalian systems
+
+**3. DEVELOPMENTAL AND TISSUE CONTEXT:**
+   - Specify when and where the gene is expressed
+   - Describe developmental stages or tissues affected
+   - Explain temporal regulation if relevant
+   - Connect to specific biological processes
+
+**4. FUNCTIONAL RELATIONSHIPS:**
+   - Describe genetic interactions (synthetic lethality, suppression, enhancement)
+   - Identify parallel pathways or redundant functions
+   - Note epistatic relationships
+   - Mention compensatory mechanisms
+
+**5. CROSS-SPECIES KNOWLEDGE TRANSFER:**
+   - Explicitly connect fly findings to broader biology
+   - Discuss how fly models inform disease research
+   - Highlight conserved mechanisms discovered in Drosophila
+   - Note clinical relevance where applicable
 
 CRITICAL FORMATTING INSTRUCTIONS:
 
 **NEVER use HTML tags in your response.** Always use Markdown formatting:
 - For links: Use [Link Text](URL) format
 - For emphasis: Use **bold** for important terms
+- For pathway names: Use **bold** to highlight them
 
 CITATION INSTRUCTIONS:
 
@@ -418,6 +639,7 @@ CITATION INSTRUCTIONS:
    - Create a "References" section at the end
    - Format: "1. Author et al. (Year). Title. PMID: 12345. [View on PubMed](URL)"
    - Synthesize information from the papers
+   - Note: Papers are pre-filtered for relevance - higher scores indicate better matches
    - DO NOT say you don't have access to papers!
 
 **IF you see "No publications found" or no PUBLICATIONS section:**
@@ -431,15 +653,25 @@ CITATION INSTRUCTIONS:
    - Use the official gene symbol and FlyBase ID
    - Include link: [View on FlyBase](URL)
    - Cite the official information provided
+   - For multiple genes: compare and contrast their functions and pathways
+
+**FOR COMPARISON QUERIES (multiple genes):**
+   - Structure your answer to compare pathway roles
+   - Highlight functional similarities and differences
+   - Discuss potential interactions between the genes
+   - Note if they're in parallel or antagonistic pathways
 
 **General Guidelines:**
+- Lead with pathway and mechanistic context
+- Always mention human relevance and orthologues
 - Be confident when citing papers that ARE provided
 - Don't claim lack of access if papers ARE in the context
 - If papers are provided, they are recent and relevant - use them!
 - Synthesize across multiple papers when available
 - Always be accurate and acknowledge true uncertainty
+- Structure responses to emphasize biological pathways and mechanisms
 
-Remember: If papers are in your context window between the PUBLICATIONS markers, you DO have access to them - cite them confidently!"""
+Remember: Your goal is not just to describe what a gene does, but to place it in the context of cellular pathways, evolutionary conservation, and broader biological significance!"""
 
         # Build enhanced message
         enhanced_message = user_message
@@ -483,4 +715,6 @@ Remember: If papers are in your context window between the PUBLICATIONS markers,
     def reset_conversation(self):
         """Clear conversation history"""
         self.conversation_history = []
+        self.mentioned_genes = set()
+        self.mentioned_pathways = set()
         print("🔄 Conversation history cleared")
