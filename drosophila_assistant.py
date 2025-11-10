@@ -30,14 +30,14 @@ class DrosophilaAssistant:
         
         # Check for broad query
         if any(indicator in query_lower for indicator in broad_indicators):
-            return 15  # More papers for filtering
+            return 8  # REDUCED: More papers for filtering
         
         # Check for specific query
         if any(indicator in query_lower for indicator in specific_indicators):
-            return 8  # Fewer papers for specific questions
+            return 5  # REDUCED: Fewer papers for specific questions
         
         # Default: moderate
-        return 10
+        return 6  # REDUCED: Default moderate amount
     
     def calculate_relevance_score(self, paper: Dict, query_terms: List[str]) -> float:
         """
@@ -198,7 +198,7 @@ Output ONLY the search keywords, nothing else.""",
             print(f"  🔍 PubMed query: {full_query}")
             
             # Search PubMed - get more results initially for filtering
-            initial_results = max_results + 7  # Get extra papers to filter
+            initial_results = max_results + 3  # REDUCED: Get extra papers to filter
             handle = Entrez.esearch(db="pubmed", term=full_query, retmax=initial_results, sort="relevance")
             record = Entrez.read(handle)
             handle.close()
@@ -246,7 +246,7 @@ Output ONLY the search keywords, nothing else.""",
                     papers.append({
                         'title': title,
                         'authors': ', '.join(authors) + ' et al.' if authors else 'Unknown authors',
-                        'abstract': abstract[:800] + '...' if len(abstract) > 800 else abstract,
+                        'abstract': abstract[:500] + '...' if len(abstract) > 500 else abstract,  # REDUCED
                         'pmid': str(pmid),
                         'year': year,
                         'url': f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
@@ -690,12 +690,16 @@ Remember: Your goal is not just to describe what a gene does, but to place it in
             "content": enhanced_message
         })
         
+        # Limit conversation history to prevent memory issues (keep last 10 messages)
+        if len(self.conversation_history) > 10:
+            self.conversation_history = self.conversation_history[-10:]
+        
         print("🤖 Calling Claude API...")
         
         # Call Claude API
         response = self.client.messages.create(
             model="claude-sonnet-4-20250514",
-            max_tokens=4096,
+            max_tokens=3000,  # REDUCED from 4096 to save memory
             system=system_prompt,
             messages=self.conversation_history
         )
