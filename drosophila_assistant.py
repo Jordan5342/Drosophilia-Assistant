@@ -13,78 +13,6 @@ class DrosophilaAssistant:
     def __init__(self, api_key):
         self.client = anthropic.Anthropic(api_key=api_key)
         self.conversation_history = []
-        
-    def suggest_biorender_templates(self, query: str) -> str:
-        """Suggest relevant BioRender templates based on the query topic"""
-        query_lower = query.lower()
-        
-        suggestions = []
-        
-        # Map topics to BioRender template categories
-        if any(word in query_lower for word in ['pathway', 'signaling', 'cascade']):
-            suggestions.append({
-                'type': 'Signaling Pathways',
-                'url': 'https://www.biorender.com/template-library?category=Pathways',
-                'description': 'Visual representations of cellular signaling cascades'
-            })
-        
-        if any(word in query_lower for word in ['development', 'embryo', 'morphogenesis', 'patterning']):
-            suggestions.append({
-                'type': 'Developmental Biology',
-                'url': 'https://www.biorender.com/template-library?category=Development',
-                'description': 'Embryonic development and tissue formation diagrams'
-            })
-        
-        if any(word in query_lower for word in ['gene', 'expression', 'transcription', 'regulation']):
-            suggestions.append({
-                'type': 'Molecular Biology',
-                'url': 'https://www.biorender.com/template-library?category=Molecular',
-                'description': 'Gene expression and molecular mechanisms'
-            })
-        
-        if any(word in query_lower for word in ['cell', 'membrane', 'organelle', 'cytoplasm']):
-            suggestions.append({
-                'type': 'Cell Biology',
-                'url': 'https://www.biorender.com/template-library?category=Cell',
-                'description': 'Cellular structures and processes'
-            })
-        
-        if any(word in query_lower for word in ['experiment', 'method', 'protocol', 'workflow']):
-            suggestions.append({
-                'type': 'Experimental Design',
-                'url': 'https://www.biorender.com/template-library?category=Methods',
-                'description': 'Research workflows and experimental setups'
-            })
-        
-        if any(word in query_lower for word in ['neuron', 'brain', 'nervous', 'synapse']):
-            suggestions.append({
-                'type': 'Neuroscience',
-                'url': 'https://www.biorender.com/template-library?category=Neuroscience',
-                'description': 'Neural circuits and brain structures'
-            })
-        
-        # Format suggestions
-        if not suggestions:
-            return ""
-        
-        formatted = "\n" + "="*70 + "\n"
-        formatted += "🎨 BIORENDER TEMPLATE SUGGESTIONS\n"
-        formatted += "="*70 + "\n\n"
-        formatted += "You can create professional figures for this topic using BioRender templates:\n\n"
-        
-        for i, suggestion in enumerate(suggestions, 1):
-            formatted += f"{i}. **{suggestion['type']}**\n"
-            formatted += f"   {suggestion['description']}\n"
-            formatted += f"   🔗 [Browse Templates]({suggestion['url']})\n\n"
-        
-        formatted += "💡 Tip: BioRender offers a free tier for creating scientific figures.\n"
-        formatted += "="*70 + "\n\n"
-        
-        return formatted
-    
-    def should_generate_figure(self, query: str) -> bool:
-        """DISABLED - Figure generation removed to save memory"""
-        return False
     
     def determine_paper_count(self, user_query: str) -> int:
         """Determine optimal number of papers based on query type"""
@@ -420,17 +348,6 @@ Output ONLY the search keywords, nothing else.""",
         
         return unique_genes[:2]
     
-    def should_search_pubmed(self, message: str) -> bool:
-        """Determine if we should search PubMed - Always return True"""
-        # Always search PubMed for every query to find relevant research
-        return True
-    
-    def should_search_flybase(self, message: str) -> bool:
-        """Determine if we should search FlyBase - Search if message contains potential gene names"""
-        # Always try to extract and search for genes
-        # FlyBase will return nothing if no genes found, which is fine
-        return True
-    
     def chat(self, user_message):
         """Chat with Claude, searching PubMed and FlyBase as needed"""
         
@@ -440,7 +357,6 @@ Output ONLY the search keywords, nothing else.""",
         
         publication_context = ""
         flybase_context = ""
-        biorender_context = ""
         
         # ALWAYS search PubMed for relevant papers
         print("📚 Searching PubMed for relevant research...")
@@ -472,12 +388,6 @@ Output ONLY the search keywords, nothing else.""",
                     break  # Only use first successful match
         else:
             print("  ℹ️  No specific gene names detected")
-        
-        # Suggest BioRender templates
-        print("🎨 Checking for visualization opportunities...")
-        biorender_context = self.suggest_biorender_templates(user_message)
-        if biorender_context:
-            print("  ✅ BioRender templates suggested")
         
         # Build system prompt
         system_prompt = """You are a specialized AI assistant for Drosophila melanogaster (fruit fly) research.
@@ -522,11 +432,6 @@ CITATION INSTRUCTIONS:
    - Include link: [View on FlyBase](URL)
    - Cite the official information provided
 
-**IF you see "BIORENDER TEMPLATE SUGGESTIONS":**
-   - Mention the relevant template categories naturally in your response
-   - Include the BioRender links in a "Visual Resources" or "Create Figures" section
-   - Explain how these templates could help visualize the topic
-
 **General Guidelines:**
 - Be confident when citing papers that ARE provided
 - Don't claim lack of access if papers ARE in the context
@@ -539,14 +444,12 @@ Remember: If papers are in your context window between the PUBLICATIONS markers,
         # Build enhanced message
         enhanced_message = user_message
         
-        if publication_context or flybase_context or biorender_context:
+        if publication_context or flybase_context:
             enhanced_message = f"{user_message}\n\n"
             if flybase_context:
                 enhanced_message += flybase_context
             if publication_context:
                 enhanced_message += publication_context
-            if biorender_context:
-                enhanced_message += biorender_context
         
         # Add to conversation history
         self.conversation_history.append({
@@ -554,7 +457,7 @@ Remember: If papers are in your context window between the PUBLICATIONS markers,
             "content": enhanced_message
         })
         
-        print("🤖 Calling Claude API for main response...")
+        print("🤖 Calling Claude API...")
         
         # Call Claude API
         response = self.client.messages.create(
