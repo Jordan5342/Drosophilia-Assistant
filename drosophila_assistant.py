@@ -388,43 +388,55 @@ Output ONLY the search keywords, nothing else.""",
         Generate common variants of a gene name.
         Examples: FOXO -> foxo, Foxo, dFOXO, dfoxo
                   p53 -> p53, dmp53, Dmp53
+                  Notch -> Notch, notch, NOTCH, N
         """
         gene_name = gene_name.strip()
-        variants = [gene_name]  # Start with original
+        variants = []
         
-        # Lowercase version
+        # Start with original
+        variants.append(gene_name)
+        
+        # Try different case variations
         variants.append(gene_name.lower())
-        
-        # Capitalized version
+        variants.append(gene_name.upper())
         variants.append(gene_name.capitalize())
         
-        # Uppercase version
-        variants.append(gene_name.upper())
+        # Try first letter only (common for some Drosophila genes like Notch -> N)
+        if len(gene_name) > 1:
+            variants.append(gene_name[0].upper())
+            variants.append(gene_name[0].lower())
         
-        # Add 'd' prefix (Drosophila prefix)
+        # Add 'd' prefix variations (Drosophila prefix)
         if not gene_name.lower().startswith('d'):
             variants.append(f"d{gene_name}")
             variants.append(f"d{gene_name.lower()}")
+            variants.append(f"D{gene_name}")
             variants.append(f"D{gene_name.lower()}")
+            variants.append(f"D{gene_name.upper()}")
         
         # Remove 'd' prefix if present
         if gene_name.lower().startswith('d') and len(gene_name) > 1:
-            variants.append(gene_name[1:])
-            variants.append(gene_name[1:].lower())
+            no_d = gene_name[1:]
+            variants.append(no_d)
+            variants.append(no_d.lower())
+            variants.append(no_d.upper())
+            variants.append(no_d.capitalize())
         
         # Handle dashes and underscores
         if '-' in gene_name:
             variants.append(gene_name.replace('-', ''))
+            variants.append(gene_name.replace('-', '').lower())
         if '_' in gene_name:
             variants.append(gene_name.replace('_', ''))
+            variants.append(gene_name.replace('_', '').lower())
         
-        # Return unique variants, prioritizing original and lowercase
+        # Remove exact duplicates while preserving case variations
         seen = set()
         unique_variants = []
         for v in variants:
-            if v.lower() not in seen:
+            if v not in seen:  # Changed from v.lower() to v to preserve case
                 unique_variants.append(v)
-                seen.add(v.lower())
+                seen.add(v)
         
         return unique_variants
     
