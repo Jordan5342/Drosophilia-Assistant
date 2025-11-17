@@ -194,8 +194,15 @@ class DrosophilaAssistant:
                 })
                 response = session.get(url, timeout=5, allow_redirects=True)
                 
+                # Handle 202 Accepted status (page still processing)
+                if response.status_code == 202:
+                    print(f"    ⚠️  FlyBase still processing (202), retrying...")
+                    import time
+                    time.sleep(1)
+                    response = session.get(url, timeout=5, allow_redirects=True)
+                
                 if response.status_code != 200:
-                    print(f"    ⚠️  FlyBase returned status {response.status_code}")
+                    print(f"    ⚠️  FlyBase returned status {response.status_code}, using fallback")
                     return self._fallback_pubmed_search(fbgn, max_results)
                 
             except (requests.exceptions.Timeout, requests.exceptions.ConnectionError, requests.exceptions.ProxyError):
@@ -264,8 +271,8 @@ class DrosophilaAssistant:
             except Exception as e:
                 print(f"    ⚠️  PubMed fetch error: {e}")
                 # Fallback: return basic PMID links
-                print(f"    Returning {len(pmids)} basic PMID links as fallback")
-                return [{'pmid': pmid, 'title': f'Publication PMID:{pmid}', 'authors': 'See PubMed', 'year': 'N/A', 'url': f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/", 'source': 'FlyBase'} for pmid in pmids[:max_results]]
+                print(f"    Returning {len(pmids)} basic links as fallback")
+                return [{'pmid': pmid, 'title': f'Publication', 'authors': 'See PubMed', 'year': 'N/A', 'url': f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/", 'source': 'FlyBase'} for pmid in pmids[:max_results]]
             
         except Exception as e:
             print(f"    ⚠️  Error fetching publications: {e}")
