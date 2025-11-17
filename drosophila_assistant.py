@@ -10,6 +10,14 @@ from collections import Counter
 # Configure Entrez (PubMed API)
 Entrez.email = "jordanszt@icloud.com"  # Required by NCBI
 
+# NOTE: FlyBase API access
+# The FlyBase API (flybase.org) may require network access that isn't available in all environments.
+# If FlyBase lookups are failing:
+# 1. Check that your deployment environment allows access to flybase.org
+# 2. Verify the FlyBase API endpoints are still current (they may change)
+# 3. Consider adding error logging to track which API methods work
+# 4. The code will gracefully fall back to PubMed-only mode if FlyBase is unavailable
+
 class DrosophilaAssistant:
     def __init__(self, api_key):
         self.client = anthropic.Anthropic(api_key=api_key)
@@ -47,54 +55,134 @@ class DrosophilaAssistant:
         try:
             print(f"  📚 Fetching FlyBase publications for {fbgn}...")
             
-            # FlyBase API endpoint for gene references
-            # Note: This is a simplified approach - FlyBase's actual API structure may vary
+            # Method 1: Try the references endpoint
             pub_url = f"https://flybase.org/api/v1.0/gene/{fbgn}/references"
             
-            response = requests.get(pub_url, timeout=15)
+            try:
+                response = requests.get(pub_url, timeout=15)
+                
+                if response.status_code == 200 and response.text:
+                    try:
+                        data = response.json()
+                        publications = self._parse_flybase_publications(data, max_results, fbgn)
+                        if publications:
+                            print(f"  ✅ Retrieved {len(publications)} publications from FlyBase")
+                            return publications
+                    except ValueError:
+                        pass
+            except requests.exceptions.RequestException:
+                pass
             
-            if response.status_code != 200:
-                print(f"  ℹ️  No publications endpoint available for {fbgn}")
-                return []
+            # Method 2: Try alternative endpoint structure
+            alt_url = f"https://flybase.org/api/gene/{fbgn}/publications"
             
             try:
-                data = response.json()
-            except ValueError:
-                return []
+                response = requests.get(alt_url, timeout=15)
+                
+                if response.status_code == 200 and response.text:
+                    try:
+                        data = response.json()
+                        publications = self._parse_flybase_publications(data, max_results, fbgn)
+                        if publications:
+                            print(f"  ✅ Retrieved {len(publications)} publications from FlyBase (alt)")
+                            return publications
+                    except ValueError:
+                        pass
+            except requests.exceptions.RequestException:
+                pass
             
-            publications = []
+            # Method 3: Try FlyBase web scraping as last resort (if APIs fail)
+            # This would require parsing HTML, which is less reliable
+            # For now, we'll just return empty list
             
-            # Parse FlyBase publication data (structure may vary)
+            print(f"  ℹ️  No publications available from FlyBase for {fbgn}")
+            return []
+            
+        except Exception as e:
+            print(f"  ⚠️  Error fetching FlyBase publications: {e}")
+            return []
+    
+    def _parse_flybase_publications(self, data: Dict, max_results: int, fbgn: str) -> List[Dict]:
+        """
+        Parse FlyBase publication data from various possible formats.
+        Returns list of publication dictionaries.
+        """
+        publications = []
+        
+        try:
+            # Handle different possible response structures
+            refs = []
+            
             if isinstance(data, list):
                 refs = data[:max_results]
-            elif isinstance(data, dict) and 'references' in data:
-                refs = data['references'][:max_results]
-            else:
+            elif isinstance(data, dict):
+                # Try different possible keys
+                for key in ['references', 'publications', 'results', 'data']:
+                    if key in data:
+                        refs = data[key]
+                        if isinstance(refs, list):
+                            refs = refs[:max_results]
+                            break
+            
+            if not refs:
                 return []
             
             for i, ref in enumerate(refs):
                 try:
-                    # Extract publication info from FlyBase format
+                    # Handle different possible field names
+                    title = ref.get('title') or ref.get('Title') or 'No title'
+                    
+                    # Parse authors
+                    authors = ref.get('authors') or ref.get('Authors') or 'Unknown authors'
+                    if isinstance(authors, list):
+                        # Join author list
+                        author_names = []
+                        for author in authors[:3]:
+                            if isinstance(author, dict):
+                                name = author.get('name') or author.get('lastName', '')
+                                if name:
+                                    author_names.append(name)
+                            elif isinstance(author, str):
+                                author_names.append(author)
+                        authors = ', '.join(author_names) + ' et al.' if author_names else 'Unknown authors'
+                    
+                    year = ref.get('year') or ref.get('Year') or ref.get('publicationYear') or 'N/A'
+                    pmid = ref.get('pmid') or ref.get('PMID') or ref.get('pubmedId') or ''
+                    fbrf = ref.get('fbrf') or ref.get('FBRF') or ref.get('flybaseId') or ''
+                    
+                    abstract = ref.get('abstract') or ref.get('Abstract') or 'No abstract available'
+                    if len(abstract) > 500:
+                        abstract = abstract[:500] + '...'
+                    
+                    # Determine URL
+                    if pmid:
+                        url = f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
+                    elif fbrf:
+                        url = f"https://flybase.org/reports/{fbrf}"
+                    else:
+                        url = f"https://flybase.org/reports/{fbgn}"
+                    
                     pub = {
-                        'title': ref.get('title', 'No title'),
-                        'authors': ref.get('authors', 'Unknown authors'),
-                        'year': ref.get('year', 'N/A'),
-                        'pmid': ref.get('pmid', ''),
-                        'fbrf': ref.get('fbrf', ''),
-                        'abstract': ref.get('abstract', 'No abstract available')[:500],
-                        'url': f"https://pubmed.ncbi.nlm.nih.gov/{ref.get('pmid', '')}/" if ref.get('pmid') else f"https://flybase.org/reports/{ref.get('fbrf', '')}",
+                        'title': title,
+                        'authors': authors,
+                        'year': str(year),
+                        'pmid': str(pmid) if pmid else '',
+                        'fbrf': str(fbrf) if fbrf else '',
+                        'abstract': abstract,
+                        'url': url,
                         'source': 'FlyBase',
-                        'flybase_rank': i + 1  # Preserve FlyBase ranking
+                        'flybase_rank': i + 1
                     }
                     publications.append(pub)
+                    
                 except Exception as e:
+                    print(f"  ⚠️  Error parsing publication {i+1}: {e}")
                     continue
             
-            print(f"  ✅ Retrieved {len(publications)} publications from FlyBase")
             return publications
             
         except Exception as e:
-            print(f"  ⚠️  Error fetching FlyBase publications: {e}")
+            print(f"  ⚠️  Error in publication parsing: {e}")
             return []
     
     def calculate_relevance_score(self, paper: Dict, query_terms: List[str]) -> float:
@@ -441,60 +529,83 @@ Output ONLY the search keywords, nothing else.""",
         return unique_variants
     
     def search_flybase(self, gene_name: str) -> Optional[Dict]:
-        """Search FlyBase for gene information"""
+        """Search FlyBase for gene information using multiple methods"""
         try:
             # Clean up gene name
             gene_name = gene_name.strip()
             
-            # Try FlyBase lookup service
+            # Method 1: Try FlyBase autocomplete API
             lookup_url = f"https://flybase.org/api/v1.0/genes/autocomplete?query={gene_name}"
             
-            response = requests.get(lookup_url, timeout=10)
-            
-            # Check if response is valid
-            if response.status_code != 200:
-                return None
-            
-            # Check if response has content
-            if not response.text or response.text.strip() == '':
-                return None
-            
-            # Try to parse JSON
             try:
-                data = response.json()
-            except ValueError:
-                return None
+                response = requests.get(lookup_url, timeout=10)
+                
+                # Check if response is valid
+                if response.status_code == 200 and response.text and response.text.strip():
+                    try:
+                        data = response.json()
+                        
+                        if data and isinstance(data, list) and len(data) > 0:
+                            # Get first match
+                            first_match = data[0]
+                            
+                            fbgn = first_match.get('id', '')
+                            symbol = first_match.get('symbol', gene_name)
+                            name = first_match.get('name', 'Unknown')
+                            
+                            # Track this gene in session
+                            self.mentioned_genes.add(symbol.lower())
+                            
+                            gene_info = {
+                                'symbol': symbol,
+                                'name': name,
+                                'fbgn': fbgn,
+                                'summary': f"Gene symbol: {symbol}. This is a Drosophila gene.",
+                                'synonyms': first_match.get('synonyms', []),
+                                'url': f"https://flybase.org/reports/{fbgn}"
+                            }
+                            
+                            print(f"  ✅ Found: {symbol} ({fbgn})")
+                            return gene_info
+                    except (ValueError, KeyError, IndexError):
+                        pass  # Fall through to next method
+            except (requests.exceptions.RequestException, requests.exceptions.Timeout):
+                pass  # Fall through to next method
             
-            if data and len(data) > 0:
-                # Get first match
-                first_match = data[0]
-                
-                fbgn = first_match.get('id', '')
-                symbol = first_match.get('symbol', gene_name)
-                name = first_match.get('name', 'Unknown')
-                
-                # Track this gene in session
-                self.mentioned_genes.add(symbol.lower())
-                
-                gene_info = {
-                    'symbol': symbol,
-                    'name': name,
-                    'fbgn': fbgn,
-                    'summary': f"Gene symbol: {symbol}. This is a Drosophila gene.",
-                    'synonyms': first_match.get('synonyms', []),
-                    'url': f"https://flybase.org/reports/{fbgn}"
-                }
-                
-                print(f"  ✅ Found: {symbol} ({fbgn})")
-                return gene_info
+            # Method 2: Try alternative FlyBase search endpoint
+            # Some FlyBase APIs might use different endpoints
+            alt_url = f"https://flybase.org/api/search?query={gene_name}&category=gene"
+            
+            try:
+                response = requests.get(alt_url, timeout=10)
+                if response.status_code == 200 and response.text:
+                    try:
+                        data = response.json()
+                        # Parse alternative response format
+                        if isinstance(data, dict) and 'results' in data:
+                            results = data['results']
+                            if results and len(results) > 0:
+                                first = results[0]
+                                gene_info = {
+                                    'symbol': first.get('symbol', gene_name),
+                                    'name': first.get('name', 'Unknown'),
+                                    'fbgn': first.get('id', ''),
+                                    'summary': first.get('summary', ''),
+                                    'synonyms': first.get('synonyms', []),
+                                    'url': f"https://flybase.org/reports/{first.get('id', '')}"
+                                }
+                                self.mentioned_genes.add(gene_info['symbol'].lower())
+                                print(f"  ✅ Found (alt): {gene_info['symbol']} ({gene_info['fbgn']})")
+                                return gene_info
+                    except (ValueError, KeyError, IndexError):
+                        pass
+            except (requests.exceptions.RequestException, requests.exceptions.Timeout):
+                pass
             
             return None
                 
-        except requests.exceptions.Timeout:
-            return None
-        except requests.exceptions.RequestException as e:
-            return None
         except Exception as e:
+            print(f"  ⚠️  FlyBase search error: {e}")
             return None
     
     def format_flybase_info(self, gene_info: Dict) -> str:
