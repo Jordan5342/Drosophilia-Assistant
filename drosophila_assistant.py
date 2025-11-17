@@ -5,7 +5,6 @@ import json
 import requests
 from typing import Optional, Dict, List
 import re
-from collections import Counter
 
 # Configure Entrez
 Entrez.email = "jordanszt@icloud.com"
@@ -131,9 +130,14 @@ def search_flybase_fixed(gene_name: str) -> Optional[Dict]:
         
         # Method 2: Quick web lookup (timeout 8s)
         try:
-            response = requests.get(
+            session = requests.Session()
+            session.headers.update({
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            })
+            response = session.get(
                 f"https://flybase.org/search?query={gene_name}",
-                timeout=8
+                timeout=8,
+                allow_redirects=True
             )
             fbgn_match = re.search(r'FBgn\d{7}', response.text)
             if fbgn_match:
@@ -147,7 +151,7 @@ def search_flybase_fixed(gene_name: str) -> Optional[Dict]:
                     'synonyms': [],
                     'url': f"https://flybase.org/reports/{fbgn}"
                 }
-        except (requests.exceptions.Timeout, requests.exceptions.RequestException):
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError, requests.exceptions.ProxyError):
             pass
         
         print(f"  ℹ️  '{gene_name}' not found")
@@ -177,26 +181,43 @@ class DrosophilaAssistant:
         return 6
     
     def get_flybase_publications(self, fbgn: str, max_results: int = 10) -> List[Dict]:
-        """Fetch publications from FlyBase with short timeout and PubMed fallback"""
+        """Fetch publications from FlyBase with proxy handling and fallback"""
         try:
             print(f"  📚 Fetching publications for {fbgn}...")
             url = f"https://flybase.org/reports/{fbgn}"
             
-            # Quick timeout for FlyBase page fetch
-            response = requests.get(url, timeout=5)
+            # Try with explicit session and headers to avoid proxy issues
+            try:
+                session = requests.Session()
+                session.headers.update({
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                })
+                response = session.get(url, timeout=5, allow_redirects=True)
+                
+                if response.status_code != 200:
+                    print(f"    ⚠️  FlyBase returned status {response.status_code}")
+                    return self._fallback_pubmed_search(fbgn, max_results)
+                
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError, requests.exceptions.ProxyError):
+                print(f"    ⚠️  FlyBase connection failed, falling back to direct PubMed search")
+                return self._fallback_pubmed_search(fbgn, max_results)
             
-            if response.status_code != 200:
-                return []
+            # Extract PMIDs from page - use the pattern that actually works
+            pmid_pattern = r'/pubmed/(\d+)'
+            pmids = re.findall(pmid_pattern, response.text, re.IGNORECASE)
             
-            # Extract PMIDs from page
-            pmid_pattern = r'PMID[:\s]*(\d+)'
-            pmids = list(dict.fromkeys(re.findall(pmid_pattern, response.text, re.IGNORECASE)))[:max_results]
+            # Remove duplicates while preserving order
+            pmids = list(dict.fromkeys(pmids))[:max_results]
+            
+            print(f"    Found {len(pmids)} PMIDs on FlyBase page")
             
             if not pmids:
-                return []
+                print(f"    ℹ️  No PMIDs found on page, falling back to PubMed search")
+                return self._fallback_pubmed_search(fbgn, max_results)
             
             # Try to fetch from PubMed
             try:
+                print(f"    Fetching details from PubMed for {len(pmids)} articles...")
                 handle = Entrez.efetch(db="pubmed", id=pmids, rettype="abstract", retmode="xml")
                 records = Entrez.read(handle)
                 handle.close()
@@ -232,23 +253,89 @@ class DrosophilaAssistant:
                             'source': 'FlyBase',
                             'flybase_rank': i + 1
                         })
-                    except Exception:
+                    except Exception as e:
+                        print(f"    ⚠️  Error parsing article {i+1}: {e}")
                         continue
                 
                 if publications:
-                    print(f"  ✅ Retrieved {len(publications)} publications")
+                    print(f"  ✅ Retrieved {len(publications)} publications from FlyBase")
                 return publications
                 
             except Exception as e:
-                print(f"  ⚠️  Could not fetch PubMed details: {e}")
-                # Fallback: return basic PMIDs
-                return [{'pmid': pmid, 'url': f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/", 'source': 'FlyBase'} for pmid in pmids[:max_results]]
+                print(f"    ⚠️  PubMed fetch error: {e}")
+                # Fallback: return basic PMID links
+                print(f"    Returning {len(pmids)} basic PMID links as fallback")
+                return [{'pmid': pmid, 'title': f'Publication PMID:{pmid}', 'authors': 'See PubMed', 'year': 'N/A', 'url': f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/", 'source': 'FlyBase'} for pmid in pmids[:max_results]]
             
-        except requests.exceptions.Timeout:
-            print(f"  ⏱️  FlyBase page load timeout, skipping publications")
-            return []
         except Exception as e:
-            print(f"  ⚠️  Error fetching publications: {e}")
+            print(f"    ⚠️  Error fetching publications: {e}")
+            return self._fallback_pubmed_search(fbgn, max_results)
+    
+    def _fallback_pubmed_search(self, fbgn: str, max_results: int) -> List[Dict]:
+        """Fallback: search PubMed directly using gene name from FBgn"""
+        try:
+            # Extract gene name from known genes database or use FBgn
+            gene_name = fbgn  # Default
+            for key, (symbol, name, fbn) in KNOWN_GENES.items():
+                if fbn == fbgn:
+                    gene_name = symbol
+                    break
+            
+            print(f"    Searching PubMed for '{gene_name}' (Drosophila)...")
+            full_query = f"Drosophila AND {gene_name}"
+            
+            handle = Entrez.esearch(db="pubmed", term=full_query, retmax=max_results + 2, sort="relevance")
+            record = Entrez.read(handle)
+            handle.close()
+            
+            pmids = record.get("IdList", [])[:max_results]
+            
+            if not pmids:
+                print(f"    No results found")
+                return []
+            
+            handle = Entrez.efetch(db="pubmed", id=pmids, rettype="abstract", retmode="xml")
+            records = Entrez.read(handle)
+            handle.close()
+            
+            publications = []
+            for i, article in enumerate(records.get('PubmedArticle', [])):
+                try:
+                    medline = article['MedlineCitation']
+                    article_data = medline['Article']
+                    
+                    title = article_data.get('ArticleTitle', 'No title')
+                    abstract = article_data.get('Abstract', {}).get('AbstractText', [''])
+                    abstract = ' '.join(str(a) for a in abstract) if isinstance(abstract, list) else abstract
+                    
+                    authors = []
+                    for author in article_data.get('AuthorList', [])[:3]:
+                        if 'LastName' in author:
+                            authors.append(f"{author['LastName']} {author.get('Initials', '')}")
+                    
+                    pmid = str(medline['PMID'])
+                    year = 'N/A'
+                    if 'ArticleDate' in article_data and article_data['ArticleDate']:
+                        year = article_data['ArticleDate'][0].get('Year', 'N/A')
+                    
+                    publications.append({
+                        'title': title,
+                        'authors': ', '.join(authors) + ' et al.' if authors else 'Unknown',
+                        'year': year,
+                        'pmid': pmid,
+                        'abstract': abstract[:500] + '...' if len(abstract) > 500 else abstract,
+                        'url': f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
+                        'source': 'FlyBase (via PubMed)'
+                    })
+                except Exception:
+                    continue
+            
+            if publications:
+                print(f"  ✅ Retrieved {len(publications)} publications via PubMed")
+            return publications
+            
+        except Exception as e:
+            print(f"    ⚠️  Fallback search failed: {e}")
             return []
     
     def search_pubmed(self, query, max_results=5):
@@ -303,29 +390,35 @@ class DrosophilaAssistant:
             return []
     
     def extract_gene_names(self, text: str) -> List[str]:
-        """Extract gene names from query"""
+        """Extract gene names from query - improved to avoid false positives"""
         potential_genes = []
-        exclude = {'aging', 'gene', 'genes', 'protein', 'proteins', 'what', 'is', 'are', 'tell', 'me', 'about'}
+        exclude = {'aging', 'gene', 'genes', 'protein', 'proteins', 'what', 'is', 'are', 'tell', 'me', 'about', 'a', 'n', 'the', 'of', 'in'}
         
-        for gene in list(KNOWN_GENES.keys())[:20]:
-            if gene in text.lower():
+        text_lower = text.lower()
+        
+        # First: check for explicit gene mentions in known database (only multi-char genes)
+        for gene_key in KNOWN_GENES.keys():
+            if len(gene_key) > 1 and gene_key in text_lower and gene_key not in exclude:
+                potential_genes.append(gene_key)
+        
+        # Second: look for patterns like "gene X" or "X gene"
+        pattern = r'(?:gene\s+([a-zA-Z]{2,})|([a-zA-Z]{2,})\s+gene)'
+        matches = re.findall(pattern, text, re.IGNORECASE)
+        for match in matches:
+            gene = match[0] or match[1]
+            if gene.lower() not in exclude and len(gene) > 1:
                 potential_genes.append(gene)
         
-        if not potential_genes:
-            pattern = r'(?:gene\s+(\w+)|(\w+)\s+gene|what\s+(?:is|does)\s+(\w+))'
-            matches = re.findall(pattern, text, re.IGNORECASE)
-            for match in matches:
-                gene = match[0] or match[1] or match[2]
-                if gene and gene.lower() not in exclude:
-                    potential_genes.append(gene)
-        
+        # Remove duplicates while preserving order
         seen = set()
         unique = []
         for g in potential_genes:
-            if g.lower() not in seen:
-                unique.append(g)
-                seen.add(g.lower())
+            g_lower = g.lower()
+            if g_lower not in seen and g_lower not in exclude:
+                unique.append(g_lower)
+                seen.add(g_lower)
         
+        # Limit to 3 genes per query
         return unique[:3]
     
     def format_papers(self, papers):
