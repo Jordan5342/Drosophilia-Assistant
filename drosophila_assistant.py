@@ -177,69 +177,78 @@ class DrosophilaAssistant:
         return 6
     
     def get_flybase_publications(self, fbgn: str, max_results: int = 10) -> List[Dict]:
-        """Fetch publications from FlyBase - simplified"""
+        """Fetch publications from FlyBase with short timeout and PubMed fallback"""
         try:
             print(f"  📚 Fetching publications for {fbgn}...")
             url = f"https://flybase.org/reports/{fbgn}"
-            response = requests.get(url, timeout=10)
+            
+            # Quick timeout for FlyBase page fetch
+            response = requests.get(url, timeout=5)
             
             if response.status_code != 200:
                 return []
             
-            publications = []
+            # Extract PMIDs from page
             pmid_pattern = r'PMID[:\s]*(\d+)'
             pmids = list(dict.fromkeys(re.findall(pmid_pattern, response.text, re.IGNORECASE)))[:max_results]
             
             if not pmids:
                 return []
             
+            # Try to fetch from PubMed
             try:
                 handle = Entrez.efetch(db="pubmed", id=pmids, rettype="abstract", retmode="xml")
                 records = Entrez.read(handle)
                 handle.close()
                 
+                publications = []
                 for i, article in enumerate(records.get('PubmedArticle', [])):
-                    medline = article['MedlineCitation']
-                    article_data = medline['Article']
-                    
-                    title = article_data.get('ArticleTitle', 'No title')
-                    abstract = article_data.get('Abstract', {}).get('AbstractText', [''])
-                    abstract = ' '.join(str(a) for a in abstract) if isinstance(abstract, list) else abstract
-                    
-                    authors = []
-                    for author in article_data.get('AuthorList', [])[:3]:
-                        if 'LastName' in author:
-                            authors.append(f"{author['LastName']} {author.get('Initials', '')}")
-                    
-                    pmid = str(medline['PMID'])
-                    year = 'N/A'
-                    
-                    if 'ArticleDate' in article_data and article_data['ArticleDate']:
-                        year = article_data['ArticleDate'][0].get('Year', 'N/A')
-                    
-                    publications.append({
-                        'title': title,
-                        'authors': ', '.join(authors) + ' et al.' if authors else 'Unknown',
-                        'year': year,
-                        'pmid': pmid,
-                        'abstract': abstract[:500] + '...' if len(abstract) > 500 else abstract,
-                        'url': f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
-                        'source': 'FlyBase',
-                        'flybase_rank': i + 1
-                    })
+                    try:
+                        medline = article['MedlineCitation']
+                        article_data = medline['Article']
+                        
+                        title = article_data.get('ArticleTitle', 'No title')
+                        abstract = article_data.get('Abstract', {}).get('AbstractText', [''])
+                        abstract = ' '.join(str(a) for a in abstract) if isinstance(abstract, list) else abstract
+                        
+                        authors = []
+                        for author in article_data.get('AuthorList', [])[:3]:
+                            if 'LastName' in author:
+                                authors.append(f"{author['LastName']} {author.get('Initials', '')}")
+                        
+                        pmid = str(medline['PMID'])
+                        year = 'N/A'
+                        
+                        if 'ArticleDate' in article_data and article_data['ArticleDate']:
+                            year = article_data['ArticleDate'][0].get('Year', 'N/A')
+                        
+                        publications.append({
+                            'title': title,
+                            'authors': ', '.join(authors) + ' et al.' if authors else 'Unknown',
+                            'year': year,
+                            'pmid': pmid,
+                            'abstract': abstract[:500] + '...' if len(abstract) > 500 else abstract,
+                            'url': f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
+                            'source': 'FlyBase',
+                            'flybase_rank': i + 1
+                        })
+                    except Exception:
+                        continue
+                
+                if publications:
+                    print(f"  ✅ Retrieved {len(publications)} publications")
+                return publications
+                
             except Exception as e:
-                print(f"  ⚠️  PubMed fetch error: {e}")
-                return []
-            
-            if publications:
-                print(f"  ✅ Retrieved {len(publications)} publications")
-            return publications
+                print(f"  ⚠️  Could not fetch PubMed details: {e}")
+                # Fallback: return basic PMIDs
+                return [{'pmid': pmid, 'url': f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/", 'source': 'FlyBase'} for pmid in pmids[:max_results]]
             
         except requests.exceptions.Timeout:
-            print(f"  ⚠️  FlyBase timeout")
+            print(f"  ⏱️  FlyBase page load timeout, skipping publications")
             return []
         except Exception as e:
-            print(f"  ⚠️  Error: {e}")
+            print(f"  ⚠️  Error fetching publications: {e}")
             return []
     
     def search_pubmed(self, query, max_results=5):
@@ -344,25 +353,28 @@ class DrosophilaAssistant:
         print(f"\n{'='*70}\nQuery: {user_message[:80]}...\n{'='*70}")
         
         all_papers = []
-        gene_context = ""
         
         # Extract and lookup genes
         genes = self.extract_gene_names(user_message)
-        for gene in genes:
-            gene_info = search_flybase_fixed(gene)
-            if gene_info:
-                num_papers = self.determine_paper_count(user_message)
-                pubs = self.get_flybase_publications(gene_info['fbgn'], max_results=num_papers)
-                if pubs:
-                    all_papers.extend(pubs)
+        if genes:
+            print(f"  Found genes: {genes}")
+            for gene in genes:
+                gene_info = search_flybase_fixed(gene)
+                if gene_info:
+                    num_papers = self.determine_paper_count(user_message)
+                    pubs = self.get_flybase_publications(gene_info['fbgn'], max_results=num_papers)
+                    if pubs:
+                        all_papers.extend(pubs)
         
         # Supplement with PubMed if needed
         num_needed = self.determine_paper_count(user_message)
         if len(all_papers) < num_needed:
+            print(f"  Supplementing with PubMed...")
             pubmed_papers = self.search_pubmed(user_message, max_results=num_needed - len(all_papers))
-            all_papers.extend(pubmed_papers)
+            if pubmed_papers:
+                all_papers.extend(pubmed_papers)
         
-        # Format papers
+        # Format papers (if any)
         publication_context = self.format_papers(all_papers) if all_papers else ""
         
         # Build message
