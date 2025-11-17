@@ -422,23 +422,27 @@ class DrosophilaAssistant:
         return unique[:3]
     
     def format_papers(self, papers):
-        """Format papers for Claude"""
+        """Format papers for Claude with explicit PMID and citation format"""
         if not papers:
             return ""
         
-        formatted = "\n" + "="*70 + "\nRELEVANT PUBLICATIONS\n" + "="*70 + "\n\n"
+        formatted = "\n" + "="*70 + "\n"
+        formatted += "RELEVANT PUBLICATIONS - CITE THESE IN YOUR RESPONSE\n"
+        formatted += "="*70 + "\n\n"
         
         for i, paper in enumerate(papers, 1):
-            formatted += f"📄 Paper {i}:\n"
-            formatted += f"Title: {paper['title']}\n"
-            formatted += f"Authors: {paper['authors']}\n"
-            formatted += f"Year: {paper['year']}\n"
+            formatted += f"[{i}] {paper['authors']} ({paper['year']})\n"
+            formatted += f"    Title: {paper['title']}\n"
             if paper.get('pmid'):
-                formatted += f"PMID: {paper['pmid']}\n"
-            formatted += f"URL: {paper['url']}\n"
-            formatted += f"Abstract: {paper['abstract']}\n\n"
+                formatted += f"    PMID: {paper['pmid']}\n"
+            formatted += f"    URL: {paper['url']}\n"
+            formatted += f"    Abstract: {paper['abstract']}\n"
+            formatted += f"    Source: {paper.get('source', 'Unknown')}\n\n"
         
-        formatted += "="*70 + "\nEND OF PUBLICATIONS\n" + "="*70 + "\n\n"
+        formatted += "="*70 + "\n"
+        formatted += f"INSTRUCTIONS: Reference these papers in your answer using [1], [2], etc.\n"
+        formatted += f"Include PMIDs (PMID: XXXXX) and create a References section at the end\n"
+        formatted += "="*70 + "\n\n"
         return formatted
     
     def chat(self, user_message):
@@ -479,10 +483,43 @@ class DrosophilaAssistant:
         if len(self.conversation_history) > 10:
             self.conversation_history = self.conversation_history[-10:]
         
+        # System prompt that emphasizes citing papers
+        system_prompt = """You are a specialized AI assistant for Drosophila melanogaster (fruit fly) research.
+
+Your expertise includes:
+- Drosophila genetics, development, and molecular biology
+- Gene nomenclature and function
+- Experimental techniques in fly research
+- Developmental biology and signaling pathways
+
+CRITICAL: When you see "RELEVANT PUBLICATIONS" section with papers listed:
+1. YOU MUST cite these papers throughout your answer
+2. Use the PMIDs provided - reference them like: (PMID: 12345678)
+3. Include paper numbers: [1], [2], etc. when citing
+4. Create a "References" section at the end listing all papers
+5. Format: "1. Author et al. (Year). Title. [PMID: 12345678]"
+
+IMPORTANT INSTRUCTIONS:
+- Always cite the papers provided - DO NOT ignore them
+- If papers are provided, you MUST reference them multiple times
+- Use exact PMIDs from the papers
+- Be confident citing these papers - they were found for this specific query
+- Include a References section at the end of EVERY response with papers
+- If no papers are provided, just answer from your knowledge
+
+When discussing genes or research:
+- Emphasize genetic pathways and mechanisms
+- Mention human orthologues and conservation
+- Discuss functional relationships and interactions
+- Always cite relevant papers provided
+
+Remember: The papers in "RELEVANT PUBLICATIONS" are provided for YOU to cite and use!"""
+        
         print("🤖 Calling Claude...")
         response = self.client.messages.create(
             model="claude-sonnet-4-20250514",
             max_tokens=3000,
+            system=system_prompt,
             messages=self.conversation_history
         )
         
