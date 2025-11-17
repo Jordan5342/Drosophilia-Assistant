@@ -1,0 +1,262 @@
+"""
+FLYBASE FIX - Ready to Integrate
+================================
+
+Since FlyBase API endpoints are returning HTML instead of JSON, 
+this provides a working alternative using:
+1. Known gene mappings (instant lookup for common genes)
+2. Web scraping fallback (for other genes)
+
+INTEGRATION INSTRUCTIONS:
+-------------------------
+1. Add these imports at the top of drosophila_assistant.py:
+   from bs4 import BeautifulSoup
+   import re
+
+2. Replace the search_flybase() method with search_flybase_fixed()
+3. Replace search_flybase_with_variants() with search_flybase_with_variants_fixed()
+4. Keep everything else the same
+
+"""
+
+from bs4 import BeautifulSoup
+import re
+import requests
+from typing import Optional, Dict
+
+# COMPREHENSIVE GENE MAPPING (instantly works for these genes)
+KNOWN_GENES = {
+    # Insulin/TOR pathway
+    'inr': ('InR', 'Insulin-like receptor', 'FBgn0283499'),
+    'insulin receptor': ('InR', 'Insulin-like receptor', 'FBgn0283499'),
+    'foxo': ('foxo', 'forkhead box, sub-group O', 'FBgn0038197'),
+    'dfoxo': ('foxo', 'forkhead box, sub-group O', 'FBgn0038197'),
+    'tor': ('Tor', 'Target of rapamycin', 'FBgn0021796'),
+    'pten': ('Pten', 'Pten', 'FBgn0026379'),
+    'akt': ('Akt1', 'Akt1', 'FBgn0010379'),
+    'akt1': ('Akt1', 'Akt1', 'FBgn0010379'),
+    'pi3k': ('Pi3K92E', 'Pi3 kinase 92E', 'FBgn0015279'),
+    'dilp2': ('Dilp2', 'Drosophila insulin-like peptide 2', 'FBgn0036046'),
+    
+    # Notch pathway
+    'n': ('N', 'Notch', 'FBgn0004647'),
+    'notch': ('N', 'Notch', 'FBgn0004647'),
+    'dl': ('Dl', 'Delta', 'FBgn0000463'),
+    'delta': ('Dl', 'Delta', 'FBgn0000463'),
+    'ser': ('Ser', 'Serrate', 'FBgn0004197'),
+    'serrate': ('Ser', 'Serrate', 'FBgn0004197'),
+    
+    # Hedgehog pathway
+    'hh': ('hh', 'hedgehog', 'FBgn0004644'),
+    'hedgehog': ('hh', 'hedgehog', 'FBgn0004644'),
+    'ptc': ('ptc', 'patched', 'FBgn0003892'),
+    'patched': ('ptc', 'patched', 'FBgn0003892'),
+    'smo': ('smo', 'smoothened', 'FBgn0003444'),
+    'smoothened': ('smo', 'smoothened', 'FBgn0003444'),
+    'ci': ('ci', 'cubitus interruptus', 'FBgn0004859'),
+    
+    # Wnt/Wingless pathway
+    'wg': ('wg', 'wingless', 'FBgn0004009'),
+    'wingless': ('wg', 'wingless', 'FBgn0004009'),
+    'arm': ('arm', 'armadillo', 'FBgn0000117'),
+    'armadillo': ('arm', 'armadillo', 'FBgn0000117'),
+    'fz': ('fz', 'frizzled', 'FBgn0001085'),
+    'frizzled': ('fz', 'frizzled', 'FBgn0001085'),
+    
+    # EGFR pathway
+    'egfr': ('Egfr', 'Epidermal growth factor receptor', 'FBgn0003731'),
+    'ras': ('Ras85D', 'Ras oncogene at 85D', 'FBgn0003204'),
+    'ras85d': ('Ras85D', 'Ras oncogene at 85D', 'FBgn0003204'),
+    
+    # JAK/STAT pathway
+    'hop': ('hop', 'hopscotch', 'FBgn0004864'),
+    'hopscotch': ('hop', 'hopscotch', 'FBgn0004864'),
+    'stat': ('Stat92E', 'Signal-transducer and activator of transcription protein at 92E', 'FBgn0016917'),
+    'stat92e': ('Stat92E', 'Signal-transducer and activator of transcription protein at 92E', 'FBgn0016917'),
+    
+    # Segmentation genes
+    'eve': ('eve', 'even-skipped', 'FBgn0000606'),
+    'even-skipped': ('eve', 'even-skipped', 'FBgn0000606'),
+    'ftz': ('ftz', 'fushi tarazu', 'FBgn0001078'),
+    'en': ('en', 'engrailed', 'FBgn0000577'),
+    'engrailed': ('en', 'engrailed', 'FBgn0000577'),
+    'hb': ('hb', 'hunchback', 'FBgn0001180'),
+    'hunchback': ('hb', 'hunchback', 'FBgn0001180'),
+    'kr': ('Kr', 'Kruppel', 'FBgn0001325'),
+    'kruppel': ('Kr', 'Kruppel', 'FBgn0001325'),
+    
+    # Maternal genes
+    'bcd': ('bcd', 'bicoid', 'FBgn0000166'),
+    'bicoid': ('bcd', 'bicoid', 'FBgn0000166'),
+    'nos': ('nos', 'nanos', 'FBgn0002962'),
+    'nanos': ('nos', 'nanos', 'FBgn0002962'),
+    'osk': ('osk', 'oskar', 'FBgn0003028'),
+    'oskar': ('osk', 'oskar', 'FBgn0003028'),
+    
+    # Aging/longevity
+    'mth': ('mth', 'methuselah', 'FBgn0002774'),
+    'methuselah': ('mth', 'methuselah', 'FBgn0002774'),
+    'sir2': ('Sir2', 'Sir2', 'FBgn0010309'),
+    'sod': ('Sod1', 'Superoxide dismutase 1', 'FBgn0003462'),
+    'sod1': ('Sod1', 'Superoxide dismutase 1', 'FBgn0003462'),
+    'cat': ('Cat', 'Catalase', 'FBgn0000251'),
+    'catalase': ('Cat', 'Catalase', 'FBgn0000251'),
+    
+    # Apoptosis
+    'p53': ('p53', 'p53', 'FBgn0039044'),
+    'dmp53': ('p53', 'p53', 'FBgn0039044'),
+    'rpr': ('rpr', 'reaper', 'FBgn0011706'),
+    'reaper': ('rpr', 'reaper', 'FBgn0011706'),
+    'hid': ('hid', 'head involution defective', 'FBgn0003997'),
+    
+    # Circadian
+    'per': ('per', 'period', 'FBgn0003068'),
+    'period': ('per', 'period', 'FBgn0003068'),
+    'tim': ('tim', 'timeless', 'FBgn0014396'),
+    'timeless': ('tim', 'timeless', 'FBgn0014396'),
+    'clk': ('Clk', 'Clock', 'FBgn0023076'),
+    'clock': ('Clk', 'Clock', 'FBgn0023076'),
+    
+    # Classic markers
+    'w': ('w', 'white', 'FBgn0003996'),
+    'white': ('w', 'white', 'FBgn0003996'),
+    'y': ('y', 'yellow', 'FBgn0004034'),
+    'yellow': ('y', 'yellow', 'FBgn0004034'),
+}
+
+
+def search_flybase_fixed(gene_name: str) -> Optional[Dict]:
+    """
+    Fixed FlyBase search using known mappings + web scraping fallback.
+    
+    This replaces the original search_flybase() method.
+    """
+    try:
+        gene_name = gene_name.strip()
+        gene_lower = gene_name.lower()
+        
+        # Method 1: Check known genes (instant, always works)
+        if gene_lower in KNOWN_GENES:
+            symbol, name, fbgn = KNOWN_GENES[gene_lower]
+            print(f"  ✅ Found: {symbol} ({fbgn}) [Known Gene Database]")
+            return {
+                'symbol': symbol,
+                'name': name,
+                'fbgn': fbgn,
+                'summary': f"Gene symbol: {symbol}. This is a Drosophila gene.",
+                'synonyms': [],
+                'url': f"https://flybase.org/reports/{fbgn}"
+            }
+        
+        # Method 2: Try web scraping FlyBase (fallback for unknown genes)
+        return _scrape_flybase_gene(gene_name)
+        
+    except Exception as e:
+        print(f"  ⚠️  Error in FlyBase search: {e}")
+        return None
+
+
+def _scrape_flybase_gene(gene_name: str) -> Optional[Dict]:
+    """
+    Scrape FlyBase website to find gene information.
+    This is a fallback when the gene isn't in our known database.
+    """
+    try:
+        # Search FlyBase website
+        search_url = f"https://flybase.org/search?query={gene_name}"
+        response = requests.get(search_url, timeout=10)
+        
+        if response.status_code != 200:
+            return None
+        
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # Look for FBgn ID in the results
+        # FlyBase IDs follow the pattern FBgn followed by 7 digits
+        fbgn_match = re.search(r'FBgn\d{7}', response.text)
+        
+        if fbgn_match:
+            fbgn = fbgn_match.group(0)
+            
+            # Try to extract gene symbol and name from the page
+            # Look for gene report link
+            gene_link = soup.find('a', href=re.compile(f'/reports/{fbgn}'))
+            
+            if gene_link:
+                # Extract symbol (usually in the link text or nearby)
+                symbol = gene_name  # Default to input
+                name = "Gene name from FlyBase"
+                
+                # Try to find the gene symbol in nearby text
+                parent = gene_link.find_parent()
+                if parent:
+                    text = parent.get_text()
+                    # Look for gene symbols (usually short, often italic)
+                    words = text.split()
+                    for word in words[:5]:  # Check first few words
+                        if len(word) <= 10 and word.isalnum():
+                            symbol = word
+                            break
+                
+                print(f"  ✅ Found: {symbol} ({fbgn}) [Web Scraping]")
+                return {
+                    'symbol': symbol,
+                    'name': name,
+                    'fbgn': fbgn,
+                    'summary': f"Gene symbol: {symbol}. This is a Drosophila gene.",
+                    'synonyms': [],
+                    'url': f"https://flybase.org/reports/{fbgn}"
+                }
+        
+        return None
+        
+    except Exception as e:
+        print(f"  ⚠️  Web scraping failed: {e}")
+        return None
+
+
+def search_flybase_with_variants_fixed(self, gene_name: str) -> Optional[Dict]:
+    """
+    Fixed version of search_flybase_with_variants.
+    
+    This replaces the original method in your DrosophilaAssistant class.
+    Note: 'self' parameter because this goes in your class.
+    """
+    # Generate variants
+    variants = self.generate_gene_name_variants(gene_name)
+    
+    print(f"  🔍 FlyBase lookup: {gene_name}")
+    if len(variants) > 1:
+        print(f"  🔄 Will try variants: {', '.join(list(variants)[:5])}")
+    
+    # Try each variant
+    for variant in variants:
+        result = search_flybase_fixed(variant)
+        if result:
+            # Track this gene in session
+            self.mentioned_genes.add(result['symbol'].lower())
+            return result
+    
+    print(f"  ℹ️  '{gene_name}' not found in FlyBase (tried {len(variants)} variants)")
+    return None
+
+
+# TEST THE FIX
+if __name__ == "__main__":
+    print("Testing Fixed FlyBase Integration\n" + "="*60)
+    
+    test_genes = ['InR', 'inr', 'N', 'Notch', 'foxo', 'hh', 'p53', 'unknown_gene']
+    
+    for gene in test_genes:
+        print(f"\nTesting: {gene}")
+        result = search_flybase_fixed(gene)
+        if result:
+            print(f"  Symbol: {result['symbol']}")
+            print(f"  Name: {result['name']}")
+            print(f"  FBgn: {result['fbgn']}")
+            print(f"  URL: {result['url']}")
+        else:
+            print(f"  Not found")
+    
+    print("\n" + "="*60)
+    print("Coverage: {} genes in known database".format(len(KNOWN_GENES)))
