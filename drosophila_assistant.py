@@ -181,7 +181,7 @@ class DrosophilaAssistant:
         return 6
     
     def get_flybase_publications(self, fbgn: str, max_results: int = 10) -> List[Dict]:
-        """Fetch publications from FlyBase with proxy handling and fallback"""
+        """Fetch publications from FlyBase with improved retry logic for 202 status"""
         try:
             print(f"  📚 Fetching publications for {fbgn}...")
             url = f"https://flybase.org/reports/{fbgn}"
@@ -192,18 +192,26 @@ class DrosophilaAssistant:
                 session.headers.update({
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
                 })
-                response = session.get(url, timeout=5, allow_redirects=True)
                 
-                # Handle 202 Accepted status (page still processing)
-                if response.status_code == 202:
-                    print(f"    ⚠️  FlyBase still processing (202), retrying...")
-                    import time
-                    time.sleep(1)
-                    response = session.get(url, timeout=5, allow_redirects=True)
-                
-                if response.status_code != 200:
-                    print(f"    ⚠️  FlyBase returned status {response.status_code}, using fallback")
-                    return self._fallback_pubmed_search(fbgn, max_results)
+                # Retry logic for 202 status
+                max_retries = 3
+                for attempt in range(max_retries):
+                    response = session.get(url, timeout=8, allow_redirects=True)
+                    
+                    if response.status_code == 200:
+                        break  # Success, exit retry loop
+                    elif response.status_code == 202:
+                        if attempt < max_retries - 1:
+                            import time
+                            wait_time = 2 ** attempt  # 1s, 2s, 4s exponential backoff
+                            print(f"    ⏳ FlyBase processing (202), waiting {wait_time}s before retry {attempt + 1}/{max_retries - 1}...")
+                            time.sleep(wait_time)
+                        else:
+                            print(f"    ⚠️  FlyBase still processing after {max_retries} retries, using fallback")
+                            return self._fallback_pubmed_search(fbgn, max_results)
+                    else:
+                        print(f"    ⚠️  FlyBase returned status {response.status_code}, using fallback")
+                        return self._fallback_pubmed_search(fbgn, max_results)
                 
             except (requests.exceptions.Timeout, requests.exceptions.ConnectionError, requests.exceptions.ProxyError):
                 print(f"    ⚠️  FlyBase connection failed, falling back to direct PubMed search")
@@ -270,7 +278,7 @@ class DrosophilaAssistant:
                 
             except Exception as e:
                 print(f"    ⚠️  PubMed fetch error: {e}")
-                # Fallback: return basic PMID links
+                # Fallback: return basic links
                 print(f"    Returning {len(pmids)} basic links as fallback")
                 return [{'pmid': pmid, 'title': f'Publication', 'authors': 'See PubMed', 'year': 'N/A', 'url': f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/", 'source': 'FlyBase'} for pmid in pmids[:max_results]]
             
