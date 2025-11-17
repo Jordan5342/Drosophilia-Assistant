@@ -422,7 +422,7 @@ class DrosophilaAssistant:
         return unique[:3]
     
     def format_papers(self, papers):
-        """Format papers for Claude with explicit PMID and citation format"""
+        """Format papers for Claude with explicit links and citation format"""
         if not papers:
             return ""
         
@@ -433,15 +433,13 @@ class DrosophilaAssistant:
         for i, paper in enumerate(papers, 1):
             formatted += f"[{i}] {paper['authors']} ({paper['year']})\n"
             formatted += f"    Title: {paper['title']}\n"
-            if paper.get('pmid'):
-                formatted += f"    PMID: {paper['pmid']}\n"
             formatted += f"    URL: {paper['url']}\n"
             formatted += f"    Abstract: {paper['abstract']}\n"
             formatted += f"    Source: {paper.get('source', 'Unknown')}\n\n"
         
         formatted += "="*70 + "\n"
         formatted += f"INSTRUCTIONS: Reference these papers in your answer using [1], [2], etc.\n"
-        formatted += f"Include PMIDs (PMID: XXXXX) and create a References section at the end\n"
+        formatted += f"Include the URL links and create a References section at the end\n"
         formatted += "="*70 + "\n\n"
         return formatted
     
@@ -494,17 +492,16 @@ Your expertise includes:
 
 CRITICAL: When you see "RELEVANT PUBLICATIONS" section with papers listed:
 1. YOU MUST cite these papers throughout your answer
-2. Use the PMIDs provided - reference them like: (PMID: 12345678)
-3. Include paper numbers: [1], [2], etc. when citing
-4. Create a "References" section at the end listing all papers
-5. Format: "1. Author et al. (Year). Title. [PMID: 12345678]"
+2. Reference them like: [1], [2], [3], etc.
+3. Create a "References" section at the end listing all papers with links
+4. Format: "[1] Author et al. (Year). Title. [Link](URL)"
 
 IMPORTANT INSTRUCTIONS:
 - Always cite the papers provided - DO NOT ignore them
 - If papers are provided, you MUST reference them multiple times
-- Use exact PMIDs from the papers
+- Include clickable links to papers in the References section
 - Be confident citing these papers - they were found for this specific query
-- Include a References section at the end of EVERY response with papers
+- Include a References section at the end of EVERY response with papers and links
 - If no papers are provided, just answer from your knowledge
 
 When discussing genes or research:
