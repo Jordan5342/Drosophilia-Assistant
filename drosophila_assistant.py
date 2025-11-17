@@ -39,6 +39,64 @@ class DrosophilaAssistant:
         # Default: moderate
         return 6  # REDUCED: Default moderate amount
     
+    def get_flybase_publications(self, fbgn: str, max_results: int = 10) -> List[Dict]:
+        """
+        Fetch publications from FlyBase for a specific gene.
+        Returns publications in FlyBase's ranking order.
+        """
+        try:
+            print(f"  📚 Fetching FlyBase publications for {fbgn}...")
+            
+            # FlyBase API endpoint for gene references
+            # Note: This is a simplified approach - FlyBase's actual API structure may vary
+            pub_url = f"https://flybase.org/api/v1.0/gene/{fbgn}/references"
+            
+            response = requests.get(pub_url, timeout=15)
+            
+            if response.status_code != 200:
+                print(f"  ℹ️  No publications endpoint available for {fbgn}")
+                return []
+            
+            try:
+                data = response.json()
+            except ValueError:
+                return []
+            
+            publications = []
+            
+            # Parse FlyBase publication data (structure may vary)
+            if isinstance(data, list):
+                refs = data[:max_results]
+            elif isinstance(data, dict) and 'references' in data:
+                refs = data['references'][:max_results]
+            else:
+                return []
+            
+            for i, ref in enumerate(refs):
+                try:
+                    # Extract publication info from FlyBase format
+                    pub = {
+                        'title': ref.get('title', 'No title'),
+                        'authors': ref.get('authors', 'Unknown authors'),
+                        'year': ref.get('year', 'N/A'),
+                        'pmid': ref.get('pmid', ''),
+                        'fbrf': ref.get('fbrf', ''),
+                        'abstract': ref.get('abstract', 'No abstract available')[:500],
+                        'url': f"https://pubmed.ncbi.nlm.nih.gov/{ref.get('pmid', '')}/" if ref.get('pmid') else f"https://flybase.org/reports/{ref.get('fbrf', '')}",
+                        'source': 'FlyBase',
+                        'flybase_rank': i + 1  # Preserve FlyBase ranking
+                    }
+                    publications.append(pub)
+                except Exception as e:
+                    continue
+            
+            print(f"  ✅ Retrieved {len(publications)} publications from FlyBase")
+            return publications
+            
+        except Exception as e:
+            print(f"  ⚠️  Error fetching FlyBase publications: {e}")
+            return []
+    
     def calculate_relevance_score(self, paper: Dict, query_terms: List[str]) -> float:
         """
         Calculate relevance score for a paper based on query terms.
@@ -249,7 +307,8 @@ Output ONLY the search keywords, nothing else.""",
                         'abstract': abstract[:500] + '...' if len(abstract) > 500 else abstract,  # REDUCED
                         'pmid': str(pmid),
                         'year': year,
-                        'url': f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
+                        'url': f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
+                        'source': 'PubMed'
                     })
                 except Exception as e:
                     print(f"  ⚠️  Error parsing article: {e}")
@@ -271,21 +330,31 @@ Output ONLY the search keywords, nothing else.""",
             return ""
         
         formatted = "\n" + "="*70 + "\n"
-        formatted += "RELEVANT PUBLICATIONS FROM PUBMED\n"
+        formatted += "RELEVANT PUBLICATIONS\n"
         formatted += "="*70 + "\n\n"
         
         for i, paper in enumerate(papers, 1):
             formatted += f"📄 Paper {i}"
-            # Add relevance score if available
-            if 'relevance_score' in paper:
+            
+            # Show source and ranking info
+            if paper.get('source') == 'FlyBase':
+                formatted += f" (FlyBase Rank: {paper.get('flybase_rank', 'N/A')})"
+            elif 'relevance_score' in paper:
                 formatted += f" (Relevance: {paper['relevance_score']:.2f})"
+            
             formatted += ":\n"
             formatted += f"Title: {paper['title']}\n"
             formatted += f"Authors: {paper['authors']}\n"
             formatted += f"Year: {paper['year']}\n"
-            formatted += f"PMID: {paper['pmid']}\n"
+            
+            if paper.get('pmid'):
+                formatted += f"PMID: {paper['pmid']}\n"
+            if paper.get('fbrf'):
+                formatted += f"FlyBase Ref: {paper['fbrf']}\n"
+            
             formatted += f"URL: {paper['url']}\n"
             formatted += f"Abstract: {paper['abstract']}\n"
+            formatted += f"Source: {paper.get('source', 'Unknown')}\n"
             formatted += "\n" + "-"*70 + "\n\n"
         
         formatted += "="*70 + "\n"
@@ -529,7 +598,7 @@ Output ONLY the search keywords, nothing else.""",
         return unique_genes[:5]  # Increased from 2 to 5 for multi-gene support
     
     def chat(self, user_message):
-        """Chat with Claude, searching PubMed and FlyBase as needed"""
+        """Chat with Claude, searching FlyBase first, then supplementing with PubMed"""
         
         print(f"\n{'='*70}")
         print(f"User query: {user_message[:100]}...")
@@ -537,36 +606,30 @@ Output ONLY the search keywords, nothing else.""",
         
         publication_context = ""
         flybase_context = ""
+        all_papers = []
         
-        # ALWAYS search PubMed for relevant papers
-        print("📚 Searching PubMed for relevant research...")
-        num_papers = self.determine_paper_count(user_message)
-        print(f"  📊 Retrieving {num_papers} papers based on query type...")
-        papers = self.search_pubmed(user_message, max_results=num_papers)
-        if papers:
-            publication_context = self.format_papers_for_claude(papers)
-        else:
-            print("  ℹ️  No recent papers found for this query")
-            # Tell Claude explicitly that no papers were found
-            publication_context = "\n" + "="*70 + "\n"
-            publication_context += "PUBMED SEARCH RESULT\n"
-            publication_context += "="*70 + "\n\n"
-            publication_context += "No recent publications were found in PubMed for this specific query.\n"
-            publication_context += "You may answer from your knowledge base and note that no recent papers were found.\n"
-            publication_context += "\n" + "="*70 + "\n"
-        
-        # ALWAYS try to extract and search for genes on FlyBase (multi-gene support)
+        # Step 1: Try to extract genes and get FlyBase publications first
         print("🧬 Checking for gene mentions...")
         potential_genes = self.extract_gene_names(user_message)
         
         if potential_genes:
             print(f"  Potential genes detected: {potential_genes}")
             genes_found = 0
+            
             for gene in potential_genes:
                 gene_info = self.search_flybase_with_variants(gene)
                 if gene_info:
                     flybase_context += self.format_flybase_info(gene_info)
                     genes_found += 1
+                    
+                    # Get publications from FlyBase for this gene
+                    num_papers = self.determine_paper_count(user_message)
+                    flybase_pubs = self.get_flybase_publications(gene_info['fbgn'], max_results=num_papers)
+                    
+                    if flybase_pubs:
+                        all_papers.extend(flybase_pubs)
+                        print(f"  ✅ Got {len(flybase_pubs)} publications from FlyBase for {gene_info['symbol']}")
+                    
                     # For comparison queries, get multiple genes
                     if genes_found >= 3 and 'compare' not in user_message.lower():
                         break
@@ -576,7 +639,30 @@ Output ONLY the search keywords, nothing else.""",
         else:
             print("  ℹ️  No specific gene names detected")
         
-        # Build enhanced system prompt with genetic pathway emphasis
+        # Step 2: Supplement with PubMed if needed (or if no FlyBase results)
+        num_papers_needed = self.determine_paper_count(user_message)
+        
+        if len(all_papers) < num_papers_needed:
+            print(f"📚 Supplementing with PubMed (need {num_papers_needed - len(all_papers)} more papers)...")
+            pubmed_papers = self.search_pubmed(user_message, max_results=num_papers_needed - len(all_papers))
+            
+            if pubmed_papers:
+                all_papers.extend(pubmed_papers)
+                print(f"  ✅ Added {len(pubmed_papers)} papers from PubMed")
+        
+        # Format all papers (FlyBase papers will maintain their original order)
+        if all_papers:
+            publication_context = self.format_papers_for_claude(all_papers)
+        else:
+            print("  ℹ️  No publications found from any source")
+            publication_context = "\n" + "="*70 + "\n"
+            publication_context += "PUBLICATION SEARCH RESULT\n"
+            publication_context += "="*70 + "\n\n"
+            publication_context += "No publications were found from FlyBase or PubMed for this query.\n"
+            publication_context += "You may answer from your knowledge base and note that no recent papers were found.\n"
+            publication_context += "\n" + "="*70 + "\n"
+        
+        # Build enhanced system prompt
         system_prompt = """You are a specialized AI assistant for Drosophila melanogaster (fruit fly) research.
 
 Your expertise includes:
@@ -587,8 +673,13 @@ Your expertise includes:
 - Developmental biology and signaling pathways
 
 IMPORTANT: For EVERY user query, the system automatically searches:
-1. PubMed for recent publications (filtered for relevance)
-2. FlyBase for gene information (including multiple genes for comparisons)
+1. FlyBase for gene information and curated publications (prioritized and ranked by FlyBase)
+2. PubMed for additional recent publications (if needed)
+
+PUBLICATION RANKING:
+- Papers from FlyBase are shown with their FlyBase rank (these are curated and prioritized by experts)
+- Papers from PubMed are shown with relevance scores
+- FlyBase papers should be given higher weight in your response as they are expert-curated
 
 CRITICAL GENETIC PATHWAY EMPHASIS:
 
@@ -633,20 +724,21 @@ CRITICAL FORMATTING INSTRUCTIONS:
 
 CITATION INSTRUCTIONS:
 
-**IF you see "RELEVANT PUBLICATIONS FROM PUBMED" with papers listed:**
-   ✅ This means papers WERE found - you MUST cite them!
+**IF you see "RELEVANT PUBLICATIONS" with papers listed:**
+   ✅ Papers were found - you MUST cite them!
+   - PRIORITIZE papers from FlyBase (marked with "FlyBase Rank") over PubMed papers
+   - FlyBase papers are expert-curated and should be weighted more heavily
    - Reference papers throughout your answer
    - Use markdown links: [Author et al., Year](URL)  
    - Create a "References" section at the end
-   - Format: "1. Author et al. (Year). Title. PMID: 12345. [View on PubMed](URL)"
+   - Format: "1. Author et al. (Year). Title. [View on FlyBase/PubMed](URL)"
    - Synthesize information from the papers
-   - Note: Papers are pre-filtered for relevance - higher scores indicate better matches
    - DO NOT say you don't have access to papers!
 
-**IF you see "No publications found" or no PUBLICATIONS section:**
+**IF you see "No publications found":**
    ❌ Papers were not found
    - Answer from your knowledge base
-   - Briefly note: "No recent papers were found on this specific query in PubMed"
+   - Briefly note: "No recent papers were found for this query"
    - Continue with your expert knowledge
    - Suggest alternative search terms if relevant
 
@@ -665,9 +757,9 @@ CITATION INSTRUCTIONS:
 **General Guidelines:**
 - Lead with pathway and mechanistic context
 - Always mention human relevance and orthologues
+- Prioritize FlyBase-curated publications over PubMed results
 - Be confident when citing papers that ARE provided
 - Don't claim lack of access if papers ARE in the context
-- If papers are provided, they are recent and relevant - use them!
 - Synthesize across multiple papers when available
 - Always be accurate and acknowledge true uncertainty
 - Structure responses to emphasize biological pathways and mechanisms
@@ -699,7 +791,7 @@ Remember: Your goal is not just to describe what a gene does, but to place it in
         # Call Claude API
         response = self.client.messages.create(
             model="claude-sonnet-4-20250514",
-            max_tokens=3000,  # REDUCED from 4096 to save memory
+            max_tokens=3000,
             system=system_prompt,
             messages=self.conversation_history
         )
