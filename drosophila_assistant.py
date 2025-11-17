@@ -3,13 +3,12 @@ import os
 from Bio import Entrez
 import json
 import requests
-from typing import Optional, Dict, List, Tuple
+from typing import Optional, Dict, List
 import re
 from collections import Counter
-from bs4 import BeautifulSoup
 
-# Configure Entrez (PubMed API)
-Entrez.email = "jordanszt@icloud.com"  # Required by NCBI
+# Configure Entrez
+Entrez.email = "jordanszt@icloud.com"
 
 # KNOWN GENES DATABASE - 73 common Drosophila genes
 KNOWN_GENES = {
@@ -112,82 +111,50 @@ KNOWN_GENES = {
 }
 
 def search_flybase_fixed(gene_name: str) -> Optional[Dict]:
-    """
-    Fixed FlyBase search using known gene database + web scraping fallback.
-    """
+    """Optimized FlyBase search: known genes first, then quick lookup fallback."""
     try:
         gene_name = gene_name.strip()
         gene_lower = gene_name.lower()
         
-        # Method 1: Check known genes database (instant, always works)
+        # Method 1: Check known genes (instant, no network call)
         if gene_lower in KNOWN_GENES:
             symbol, name, fbgn = KNOWN_GENES[gene_lower]
-            print(f"  ✅ Found: {symbol} ({fbgn}) [Known Gene Database]")
+            print(f"  ✅ Found: {symbol} ({fbgn}) [Database]")
             return {
                 'symbol': symbol,
                 'name': name,
                 'fbgn': fbgn,
-                'summary': f"Gene symbol: {symbol}. This is a Drosophila gene.",
+                'summary': f"Gene symbol: {symbol}.",
                 'synonyms': [],
                 'url': f"https://flybase.org/reports/{fbgn}"
             }
         
-        # Method 2: Try web scraping FlyBase (fallback for unknown genes)
-        return _scrape_flybase_gene(gene_name)
+        # Method 2: Quick web lookup (timeout 8s)
+        try:
+            response = requests.get(
+                f"https://flybase.org/search?query={gene_name}",
+                timeout=8
+            )
+            fbgn_match = re.search(r'FBgn\d{7}', response.text)
+            if fbgn_match:
+                fbgn = fbgn_match.group(0)
+                print(f"  ✅ Found: {gene_name} ({fbgn}) [Lookup]")
+                return {
+                    'symbol': gene_name,
+                    'name': f"{gene_name}",
+                    'fbgn': fbgn,
+                    'summary': f"Gene symbol: {gene_name}.",
+                    'synonyms': [],
+                    'url': f"https://flybase.org/reports/{fbgn}"
+                }
+        except (requests.exceptions.Timeout, requests.exceptions.RequestException):
+            pass
         
-    except Exception as e:
-        print(f"  ⚠️  Error in FlyBase search: {e}")
-        return None
-
-
-def _scrape_flybase_gene(gene_name: str) -> Optional[Dict]:
-    """
-    Scrape FlyBase website to find gene information.
-    Fallback when gene isn't in known database.
-    """
-    try:
-        search_url = f"https://flybase.org/search?query={gene_name}"
-        response = requests.get(search_url, timeout=10)
-        
-        if response.status_code != 200:
-            return None
-        
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # Look for FBgn ID (pattern: FBgn followed by 7 digits)
-        fbgn_match = re.search(r'FBgn\d{7}', response.text)
-        
-        if fbgn_match:
-            fbgn = fbgn_match.group(0)
-            symbol = gene_name  # Default to input
-            name = "Gene name from FlyBase"
-            
-            # Try to extract gene symbol from page
-            gene_link = soup.find('a', href=re.compile(f'/reports/{fbgn}'))
-            if gene_link:
-                parent = gene_link.find_parent()
-                if parent:
-                    text = parent.get_text()
-                    words = text.split()
-                    for word in words[:5]:
-                        if len(word) <= 10 and word.isalnum():
-                            symbol = word
-                            break
-            
-            print(f"  ✅ Found: {symbol} ({fbgn}) [Web Scraping]")
-            return {
-                'symbol': symbol,
-                'name': name,
-                'fbgn': fbgn,
-                'summary': f"Gene symbol: {symbol}. This is a Drosophila gene.",
-                'synonyms': [],
-                'url': f"https://flybase.org/reports/{fbgn}"
-            }
-        
+        print(f"  ℹ️  '{gene_name}' not found")
         return None
         
     except Exception as e:
-        print(f"  ⚠️  Web scraping failed: {e}")
+        print(f"  ⚠️  Error: {e}")
         return None
 
 
@@ -196,868 +163,231 @@ class DrosophilaAssistant:
         self.client = anthropic.Anthropic(api_key=api_key)
         self.conversation_history = []
         self.mentioned_genes = set()
-        self.mentioned_pathways = set()
     
     def determine_paper_count(self, user_query: str) -> int:
-        """Determine optimal number of papers based on query type"""
+        """Determine number of papers needed"""
         query_lower = user_query.lower()
+        broad = ['top', 'list', 'overview', 'review', 'genes in', 'pathways', 'mechanisms', 'role of', 'involved in', 'best', 'major']
+        specific = ['what is', 'tell me about', 'how does', 'function of']
         
-        broad_indicators = ['top', 'list', 'overview', 'review', 'genes in', 'pathways', 
-                           'mechanisms', 'role of', 'involved in', 'best', 'major']
-        specific_indicators = ['what is', 'tell me about', 'how does', 'function of']
-        
-        if any(indicator in query_lower for indicator in broad_indicators):
+        if any(ind in query_lower for ind in broad):
             return 8
-        if any(indicator in query_lower for indicator in specific_indicators):
+        if any(ind in query_lower for ind in specific):
             return 5
         return 6
     
     def get_flybase_publications(self, fbgn: str, max_results: int = 10) -> List[Dict]:
-        """Fetch publications from FlyBase for a specific gene"""
+        """Fetch publications from FlyBase - simplified"""
         try:
-            print(f"  📚 Fetching FlyBase publications for {fbgn}...")
-            
-            # Method 1: Try API endpoint first
-            pub_url = f"https://flybase.org/api/v1.0/gene/{fbgn}/references"
-            
-            try:
-                response = requests.get(pub_url, timeout=15)
-                if response.status_code == 200 and response.text:
-                    try:
-                        data = response.json()
-                        publications = self._parse_flybase_publications(data, max_results, fbgn)
-                        if publications:
-                            print(f"  ✅ Retrieved {len(publications)} publications from FlyBase API")
-                            return publications
-                    except ValueError:
-                        pass
-            except requests.exceptions.RequestException:
-                pass
-            
-            # Method 2: Web scrape the gene report page
-            print(f"  🔄 API failed, trying web scraping...")
-            publications = self._scrape_flybase_publications(fbgn, max_results)
-            if publications:
-                print(f"  ✅ Retrieved {len(publications)} publications from FlyBase (web scraping)")
-                return publications
-            
-            print(f"  ℹ️  No publications available from FlyBase for {fbgn}")
-            return []
-            
-        except Exception as e:
-            print(f"  ⚠️  Error fetching FlyBase publications: {e}")
-            return []
-    
-    def _scrape_flybase_publications(self, fbgn: str, max_results: int = 10) -> List[Dict]:
-        """
-        Scrape publications from FlyBase gene report page.
-        Extracts PMIDs and FBrf IDs from the HTML.
-        """
-        try:
+            print(f"  📚 Fetching publications for {fbgn}...")
             url = f"https://flybase.org/reports/{fbgn}"
-            response = requests.get(url, timeout=15)
+            response = requests.get(url, timeout=10)
             
             if response.status_code != 200:
                 return []
             
-            soup = BeautifulSoup(response.text, 'html.parser')
             publications = []
-            
-            # Method 1: Find PMIDs in the page
             pmid_pattern = r'PMID[:\s]*(\d+)'
-            pmids = re.findall(pmid_pattern, response.text, re.IGNORECASE)
+            pmids = list(dict.fromkeys(re.findall(pmid_pattern, response.text, re.IGNORECASE)))[:max_results]
             
-            # Method 2: Find FBrf IDs (FlyBase reference IDs)
-            fbrf_pattern = r'(FBrf\d{7})'
-            fbrfs = re.findall(fbrf_pattern, response.text)
+            if not pmids:
+                return []
             
-            # Get unique PMIDs (preserve order, which is FlyBase's ranking)
-            seen_pmids = set()
-            unique_pmids = []
-            for pmid in pmids:
-                if pmid not in seen_pmids:
-                    unique_pmids.append(pmid)
-                    seen_pmids.add(pmid)
-            
-            # Get unique FBrf IDs
-            seen_fbrfs = set()
-            unique_fbrfs = []
-            for fbrf in fbrfs:
-                if fbrf not in seen_fbrfs:
-                    unique_fbrfs.append(fbrf)
-                    seen_fbrfs.add(fbrf)
-            
-            # If we found PMIDs, fetch their details from PubMed
-            if unique_pmids:
-                print(f"    Found {len(unique_pmids)} PMIDs from FlyBase, fetching details...")
+            try:
+                handle = Entrez.efetch(db="pubmed", id=pmids, rettype="abstract", retmode="xml")
+                records = Entrez.read(handle)
+                handle.close()
                 
-                # Limit to max_results
-                pmids_to_fetch = unique_pmids[:max_results]
-                
-                # Fetch details from PubMed for these PMIDs
-                try:
-                    handle = Entrez.efetch(db="pubmed", id=pmids_to_fetch, rettype="abstract", retmode="xml")
-                    records = Entrez.read(handle)
-                    handle.close()
+                for i, article in enumerate(records.get('PubmedArticle', [])):
+                    medline = article['MedlineCitation']
+                    article_data = medline['Article']
                     
-                    for i, article in enumerate(records['PubmedArticle']):
-                        try:
-                            medline = article['MedlineCitation']
-                            article_data = medline['Article']
-                            
-                            title = article_data.get('ArticleTitle', 'No title')
-                            abstract = article_data.get('Abstract', {}).get('AbstractText', ['No abstract available'])
-                            if isinstance(abstract, list):
-                                abstract = ' '.join(str(text) for text in abstract)
-                            
-                            authors = []
-                            if 'AuthorList' in article_data:
-                                for author in article_data['AuthorList'][:3]:
-                                    if 'LastName' in author:
-                                        authors.append(f"{author.get('LastName', '')} {author.get('Initials', '')}")
-                            
-                            pmid = str(medline['PMID'])
-                            
-                            year = 'N/A'
-                            if 'ArticleDate' in article_data and article_data['ArticleDate']:
-                                year = article_data['ArticleDate'][0].get('Year', 'N/A')
-                            elif 'Journal' in article_data and 'JournalIssue' in article_data['Journal']:
-                                pub_date = article_data['Journal']['JournalIssue'].get('PubDate', {})
-                                year = pub_date.get('Year', 'N/A')
-                            
-                            # Try to match with FBrf ID if available
-                            fbrf = unique_fbrfs[i] if i < len(unique_fbrfs) else ''
-                            
-                            pub = {
-                                'title': title,
-                                'authors': ', '.join(authors) + ' et al.' if authors else 'Unknown authors',
-                                'year': year,
-                                'pmid': pmid,
-                                'fbrf': fbrf,
-                                'abstract': abstract[:500] + '...' if len(abstract) > 500 else abstract,
-                                'url': f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
-                                'source': 'FlyBase',
-                                'flybase_rank': i + 1  # Preserve order from FlyBase page
-                            }
-                            publications.append(pub)
-                            
-                        except Exception as e:
-                            print(f"    ⚠️  Error parsing publication {i+1}: {e}")
-                            continue
+                    title = article_data.get('ArticleTitle', 'No title')
+                    abstract = article_data.get('Abstract', {}).get('AbstractText', [''])
+                    abstract = ' '.join(str(a) for a in abstract) if isinstance(abstract, list) else abstract
                     
-                except Exception as e:
-                    print(f"    ⚠️  Error fetching PubMed details: {e}")
-                    # Fallback: return basic info without full details
-                    for i, pmid in enumerate(pmids_to_fetch):
-                        fbrf = unique_fbrfs[i] if i < len(unique_fbrfs) else ''
-                        publications.append({
-                            'title': f'Publication PMID:{pmid}',
-                            'authors': 'See PubMed',
-                            'year': 'N/A',
-                            'pmid': pmid,
-                            'fbrf': fbrf,
-                            'abstract': 'Details available on PubMed',
-                            'url': f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
-                            'source': 'FlyBase',
-                            'flybase_rank': i + 1
-                        })
-            
-            # If no PMIDs but we have FBrf IDs, use those
-            elif unique_fbrfs:
-                print(f"    Found {len(unique_fbrfs)} FBrf IDs from FlyBase")
-                for i, fbrf in enumerate(unique_fbrfs[:max_results]):
+                    authors = []
+                    for author in article_data.get('AuthorList', [])[:3]:
+                        if 'LastName' in author:
+                            authors.append(f"{author['LastName']} {author.get('Initials', '')}")
+                    
+                    pmid = str(medline['PMID'])
+                    year = 'N/A'
+                    
+                    if 'ArticleDate' in article_data and article_data['ArticleDate']:
+                        year = article_data['ArticleDate'][0].get('Year', 'N/A')
+                    
                     publications.append({
-                        'title': f'FlyBase Reference {fbrf}',
-                        'authors': 'See FlyBase',
-                        'year': 'N/A',
-                        'pmid': '',
-                        'fbrf': fbrf,
-                        'abstract': 'Details available on FlyBase',
-                        'url': f"https://flybase.org/reports/{fbrf}",
+                        'title': title,
+                        'authors': ', '.join(authors) + ' et al.' if authors else 'Unknown',
+                        'year': year,
+                        'pmid': pmid,
+                        'abstract': abstract[:500] + '...' if len(abstract) > 500 else abstract,
+                        'url': f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
                         'source': 'FlyBase',
                         'flybase_rank': i + 1
                     })
-            
-            return publications
-            
-        except Exception as e:
-            print(f"    ⚠️  Web scraping error: {e}")
-            return []
-    
-    def _parse_flybase_publications(self, data: Dict, max_results: int, fbgn: str) -> List[Dict]:
-        """Parse FlyBase publication data"""
-        publications = []
-        
-        try:
-            refs = []
-            if isinstance(data, list):
-                refs = data[:max_results]
-            elif isinstance(data, dict):
-                for key in ['references', 'publications', 'results', 'data']:
-                    if key in data:
-                        refs = data[key]
-                        if isinstance(refs, list):
-                            refs = refs[:max_results]
-                            break
-            
-            if not refs:
+            except Exception as e:
+                print(f"  ⚠️  PubMed fetch error: {e}")
                 return []
             
-            for i, ref in enumerate(refs):
-                try:
-                    title = ref.get('title') or ref.get('Title') or 'No title'
-                    
-                    authors = ref.get('authors') or ref.get('Authors') or 'Unknown authors'
-                    if isinstance(authors, list):
-                        author_names = []
-                        for author in authors[:3]:
-                            if isinstance(author, dict):
-                                name = author.get('name') or author.get('lastName', '')
-                                if name:
-                                    author_names.append(name)
-                            elif isinstance(author, str):
-                                author_names.append(author)
-                        authors = ', '.join(author_names) + ' et al.' if author_names else 'Unknown authors'
-                    
-                    year = ref.get('year') or ref.get('Year') or ref.get('publicationYear') or 'N/A'
-                    pmid = ref.get('pmid') or ref.get('PMID') or ref.get('pubmedId') or ''
-                    fbrf = ref.get('fbrf') or ref.get('FBRF') or ref.get('flybaseId') or ''
-                    
-                    abstract = ref.get('abstract') or ref.get('Abstract') or 'No abstract available'
-                    if len(abstract) > 500:
-                        abstract = abstract[:500] + '...'
-                    
-                    if pmid:
-                        url = f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
-                    elif fbrf:
-                        url = f"https://flybase.org/reports/{fbrf}"
-                    else:
-                        url = f"https://flybase.org/reports/{fbgn}"
-                    
-                    pub = {
-                        'title': title,
-                        'authors': authors,
-                        'year': str(year),
-                        'pmid': str(pmid) if pmid else '',
-                        'fbrf': str(fbrf) if fbrf else '',
-                        'abstract': abstract,
-                        'url': url,
-                        'source': 'FlyBase',
-                        'flybase_rank': i + 1
-                    }
-                    publications.append(pub)
-                    
-                except Exception as e:
-                    print(f"  ⚠️  Error parsing publication {i+1}: {e}")
-                    continue
-            
+            if publications:
+                print(f"  ✅ Retrieved {len(publications)} publications")
             return publications
             
-        except Exception as e:
-            print(f"  ⚠️  Error in publication parsing: {e}")
+        except requests.exceptions.Timeout:
+            print(f"  ⚠️  FlyBase timeout")
             return []
-    
-    def calculate_relevance_score(self, paper: Dict, query_terms: List[str]) -> float:
-        """Calculate relevance score for a paper based on query terms"""
-        title = paper.get('title', '').lower()
-        abstract = paper.get('abstract', '').lower()
-        
-        title_weight = 3.0
-        abstract_weight = 1.0
-        
-        score = 0.0
-        max_score = 0.0
-        
-        for term in query_terms:
-            term_lower = term.lower()
-            term_score = 0.0
-            
-            title_count = title.count(term_lower)
-            term_score += title_count * title_weight
-            
-            abstract_count = abstract.count(term_lower)
-            term_score += abstract_count * abstract_weight
-            
-            score += term_score
-            max_score += (3 * title_weight + 5 * abstract_weight)
-        
-        if max_score > 0:
-            return min(score / max_score, 1.0)
-        return 0.0
-    
-    def filter_and_rank_papers(self, papers: List[Dict], query: str, top_n: int = 8) -> List[Dict]:
-        """Filter and rank papers by relevance"""
-        if not papers:
-            return []
-        
-        query_terms = self.extract_key_terms(query)
-        print(f"  🎯 Filtering with key terms: {', '.join(query_terms)}")
-        
-        scored_papers = []
-        for paper in papers:
-            score = self.calculate_relevance_score(paper, query_terms)
-            paper['relevance_score'] = score
-            scored_papers.append(paper)
-        
-        scored_papers.sort(key=lambda x: x['relevance_score'], reverse=True)
-        filtered_papers = [p for p in scored_papers if p['relevance_score'] >= 0.05]
-        top_papers = filtered_papers[:top_n]
-        
-        if top_papers:
-            print(f"  ✅ Filtered to {len(top_papers)} most relevant papers")
-            scores = [f"{p['relevance_score']:.2f}" for p in top_papers[:3]]
-            print(f"  📊 Relevance scores: {scores}")
-        
-        return top_papers
-    
-    def extract_key_terms(self, query: str) -> List[str]:
-        """Extract key scientific terms from query"""
-        stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
-                     'of', 'with', 'by', 'from', 'up', 'about', 'into', 'through', 'during',
-                     'what', 'which', 'who', 'when', 'where', 'why', 'how', 'is', 'are',
-                     'was', 'were', 'be', 'been', 'being', 'do', 'does', 'did', 'tell',
-                     'me', 'give', 'show', 'find', 'top', 'best', 'most'}
-        
-        words = re.findall(r'\b\w+\b', query.lower())
-        key_terms = [w for w in words if w not in stop_words and len(w) > 2]
-        
-        return key_terms
-    
-    def reformulate_query_for_pubmed(self, user_query: str) -> str:
-        """Use Claude to reformulate user queries into optimal PubMed search terms"""
-        try:
-            print(f"  🤖 Using AI to reformulate query...")
-            
-            response = self.client.messages.create(
-                model="claude-sonnet-4-20250514",
-                max_tokens=150,
-                temperature=0,
-                system="""You are an expert at converting natural language questions into optimal PubMed search queries for Drosophila research.
-
-Your task: Convert the user's question into 3-8 relevant keywords/phrases optimized for PubMed searching.
-
-Guidelines:
-- Extract core scientific concepts (genes, pathways, processes, phenotypes)
-- Use proper biological terminology
-- Remove conversational language ("tell me", "what are", "top 10", etc.)
-- Include relevant synonyms when helpful
-- Keep it concise - output ONLY the keywords separated by spaces
-- Focus on terms that would appear in scientific papers
-- Include pathway names and biological processes
-
-Examples:
-User: "What are the top 10 genes involved in aging?"
-Output: aging longevity lifespan extension genes mechanisms senescence
-
-User: "Tell me about Notch signaling in wing development"
-Output: Notch signaling wing development imaginal disc patterning
-
-User: "How does p53 work in flies?"
-Output: p53 Drosophila apoptosis DNA damage tumor suppressor
-
-User: "What genes control sleep?"
-Output: sleep circadian rhythm rest behavior neurogenetics
-
-Output ONLY the search keywords, nothing else.""",
-                messages=[{"role": "user", "content": user_query}]
-            )
-            
-            reformulated = response.content[0].text.strip()
-            
-            if len(reformulated) > 200 or '\n' in reformulated:
-                print(f"  ⚠️  Claude reformulation too long, using original query")
-                return user_query
-            
-            print(f"  ✅ Reformulated to: {reformulated}")
-            return reformulated
-            
         except Exception as e:
-            print(f"  ⚠️  Error in query reformulation: {e}")
-            return user_query
+            print(f"  ⚠️  Error: {e}")
+            return []
     
     def search_pubmed(self, query, max_results=5):
-        """Search PubMed for Drosophila-related papers"""
+        """Simplified PubMed search"""
         try:
-            reformulated = self.reformulate_query_for_pubmed(query)
-            full_query = f"Drosophila AND ({reformulated})"
-            
-            print(f"  🔍 Original: {query[:60]}...")
-            print(f"  🔍 PubMed query: {full_query}")
-            
-            initial_results = max_results + 3
-            handle = Entrez.esearch(db="pubmed", term=full_query, retmax=initial_results, sort="relevance")
+            full_query = f"Drosophila AND ({query})"
+            handle = Entrez.esearch(db="pubmed", term=full_query, retmax=max_results + 3, sort="relevance")
             record = Entrez.read(handle)
             handle.close()
             
-            id_list = record["IdList"]
-            
+            id_list = record.get("IdList", [])
             if not id_list:
-                print("  ℹ️  No PubMed results found")
                 return []
-            
-            print(f"  📥 Fetching {len(id_list)} papers for filtering...")
             
             handle = Entrez.efetch(db="pubmed", id=id_list, rettype="abstract", retmode="xml")
             records = Entrez.read(handle)
             handle.close()
             
             papers = []
-            for article in records['PubmedArticle']:
-                try:
-                    medline = article['MedlineCitation']
-                    article_data = medline['Article']
-                    
-                    title = article_data.get('ArticleTitle', 'No title')
-                    abstract = article_data.get('Abstract', {}).get('AbstractText', ['No abstract available'])
-                    if isinstance(abstract, list):
-                        abstract = ' '.join(str(text) for text in abstract)
-                    
-                    authors = []
-                    if 'AuthorList' in article_data:
-                        for author in article_data['AuthorList'][:3]:
-                            if 'LastName' in author:
-                                authors.append(f"{author.get('LastName', '')} {author.get('Initials', '')}")
-                    
-                    pmid = medline['PMID']
-                    
-                    year = 'N/A'
-                    if 'ArticleDate' in article_data and article_data['ArticleDate']:
-                        year = article_data['ArticleDate'][0].get('Year', 'N/A')
-                    elif 'Journal' in article_data and 'JournalIssue' in article_data['Journal']:
-                        pub_date = article_data['Journal']['JournalIssue'].get('PubDate', {})
-                        year = pub_date.get('Year', 'N/A')
-                    
-                    papers.append({
-                        'title': title,
-                        'authors': ', '.join(authors) + ' et al.' if authors else 'Unknown authors',
-                        'abstract': abstract[:500] + '...' if len(abstract) > 500 else abstract,
-                        'pmid': str(pmid),
-                        'year': year,
-                        'url': f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
-                        'source': 'PubMed'
-                    })
-                except Exception as e:
-                    print(f"  ⚠️  Error parsing article: {e}")
-                    continue
+            for article in records.get('PubmedArticle', [])[:max_results]:
+                medline = article['MedlineCitation']
+                article_data = medline['Article']
+                
+                title = article_data.get('ArticleTitle', 'No title')
+                abstract = article_data.get('Abstract', {}).get('AbstractText', [''])
+                abstract = ' '.join(str(a) for a in abstract) if isinstance(abstract, list) else abstract
+                
+                authors = []
+                for author in article_data.get('AuthorList', [])[:3]:
+                    if 'LastName' in author:
+                        authors.append(f"{author['LastName']} {author.get('Initials', '')}")
+                
+                pmid = str(medline['PMID'])
+                year = 'N/A'
+                if 'ArticleDate' in article_data and article_data['ArticleDate']:
+                    year = article_data['ArticleDate'][0].get('Year', 'N/A')
+                
+                papers.append({
+                    'title': title,
+                    'authors': ', '.join(authors) + ' et al.' if authors else 'Unknown',
+                    'abstract': abstract[:500] + '...' if len(abstract) > 500 else abstract,
+                    'pmid': pmid,
+                    'year': year,
+                    'url': f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
+                    'source': 'PubMed'
+                })
             
-            filtered_papers = self.filter_and_rank_papers(papers, query, top_n=max_results)
-            print(f"  ✅ Successfully retrieved {len(filtered_papers)} filtered papers")
-            return filtered_papers
+            return papers[:max_results]
             
         except Exception as e:
-            print(f"  ❌ PubMed search error: {str(e)}")
+            print(f"  ❌ PubMed error: {e}")
             return []
     
-    def format_papers_for_claude(self, papers):
-        """Format papers into a readable string for Claude"""
+    def extract_gene_names(self, text: str) -> List[str]:
+        """Extract gene names from query"""
+        potential_genes = []
+        exclude = {'aging', 'gene', 'genes', 'protein', 'proteins', 'what', 'is', 'are', 'tell', 'me', 'about'}
+        
+        for gene in list(KNOWN_GENES.keys())[:20]:
+            if gene in text.lower():
+                potential_genes.append(gene)
+        
+        if not potential_genes:
+            pattern = r'(?:gene\s+(\w+)|(\w+)\s+gene|what\s+(?:is|does)\s+(\w+))'
+            matches = re.findall(pattern, text, re.IGNORECASE)
+            for match in matches:
+                gene = match[0] or match[1] or match[2]
+                if gene and gene.lower() not in exclude:
+                    potential_genes.append(gene)
+        
+        seen = set()
+        unique = []
+        for g in potential_genes:
+            if g.lower() not in seen:
+                unique.append(g)
+                seen.add(g.lower())
+        
+        return unique[:3]
+    
+    def format_papers(self, papers):
+        """Format papers for Claude"""
         if not papers:
             return ""
         
-        formatted = "\n" + "="*70 + "\n"
-        formatted += "RELEVANT PUBLICATIONS\n"
-        formatted += "="*70 + "\n\n"
+        formatted = "\n" + "="*70 + "\nRELEVANT PUBLICATIONS\n" + "="*70 + "\n\n"
         
         for i, paper in enumerate(papers, 1):
-            formatted += f"📄 Paper {i}"
-            
-            if paper.get('source') == 'FlyBase':
-                formatted += f" (FlyBase Rank: {paper.get('flybase_rank', 'N/A')})"
-            elif 'relevance_score' in paper:
-                formatted += f" (Relevance: {paper['relevance_score']:.2f})"
-            
-            formatted += ":\n"
+            formatted += f"📄 Paper {i}:\n"
             formatted += f"Title: {paper['title']}\n"
             formatted += f"Authors: {paper['authors']}\n"
             formatted += f"Year: {paper['year']}\n"
-            
             if paper.get('pmid'):
                 formatted += f"PMID: {paper['pmid']}\n"
-            if paper.get('fbrf'):
-                formatted += f"FlyBase Ref: {paper['fbrf']}\n"
-            
             formatted += f"URL: {paper['url']}\n"
-            formatted += f"Abstract: {paper['abstract']}\n"
-            formatted += f"Source: {paper.get('source', 'Unknown')}\n"
-            formatted += "\n" + "-"*70 + "\n\n"
+            formatted += f"Abstract: {paper['abstract']}\n\n"
         
-        formatted += "="*70 + "\n"
-        formatted += "END OF PUBLICATIONS\n"
-        formatted += "="*70 + "\n\n"
+        formatted += "="*70 + "\nEND OF PUBLICATIONS\n" + "="*70 + "\n\n"
         return formatted
-    
-    def search_flybase_with_variants(self, gene_name: str) -> Optional[Dict]:
-        """Search FlyBase trying multiple name variants"""
-        variants = self.generate_gene_name_variants(gene_name)
-        
-        print(f"  🔍 FlyBase lookup: {gene_name}")
-        if len(variants) > 1:
-            print(f"  🔄 Will try variants: {', '.join(list(variants)[:5])}")
-        
-        for variant in variants:
-            result = search_flybase_fixed(variant)
-            if result:
-                self.mentioned_genes.add(result['symbol'].lower())
-                return result
-        
-        print(f"  ℹ️  '{gene_name}' not found in FlyBase (tried {len(variants)} variants)")
-        return None
-    
-    def generate_gene_name_variants(self, gene_name: str) -> List[str]:
-        """Generate common variants of a gene name"""
-        gene_name = gene_name.strip()
-        variants = []
-        
-        variants.append(gene_name)
-        variants.append(gene_name.lower())
-        variants.append(gene_name.upper())
-        variants.append(gene_name.capitalize())
-        
-        if len(gene_name) > 1:
-            variants.append(gene_name[0].upper())
-            variants.append(gene_name[0].lower())
-        
-        if not gene_name.lower().startswith('d'):
-            variants.append(f"d{gene_name}")
-            variants.append(f"d{gene_name.lower()}")
-            variants.append(f"D{gene_name}")
-            variants.append(f"D{gene_name.lower()}")
-            variants.append(f"D{gene_name.upper()}")
-        
-        if gene_name.lower().startswith('d') and len(gene_name) > 1:
-            no_d = gene_name[1:]
-            variants.append(no_d)
-            variants.append(no_d.lower())
-            variants.append(no_d.upper())
-            variants.append(no_d.capitalize())
-        
-        if '-' in gene_name:
-            variants.append(gene_name.replace('-', ''))
-            variants.append(gene_name.replace('-', '').lower())
-        if '_' in gene_name:
-            variants.append(gene_name.replace('_', ''))
-            variants.append(gene_name.replace('_', '').lower())
-        
-        seen = set()
-        unique_variants = []
-        for v in variants:
-            if v not in seen:
-                unique_variants.append(v)
-                seen.add(v)
-        
-        return unique_variants
-    
-    def format_flybase_info(self, gene_info: Dict) -> str:
-        """Format FlyBase gene information for Claude"""
-        if not gene_info:
-            return ""
-        
-        formatted = "\n" + "="*70 + "\n"
-        formatted += "FLYBASE GENE INFORMATION\n"
-        formatted += "="*70 + "\n\n"
-        
-        formatted += f"🧬 Gene Symbol: {gene_info['symbol']}\n"
-        formatted += f"Full Name: {gene_info['name']}\n"
-        formatted += f"FlyBase ID: {gene_info['fbgn']}\n"
-        
-        if gene_info.get('synonyms'):
-            synonyms = ', '.join(gene_info['synonyms'][:5])
-            formatted += f"Synonyms: {synonyms}\n"
-        
-        formatted += f"\nFlyBase Link: {gene_info['url']}\n"
-        
-        formatted += "\n" + "="*70 + "\n"
-        formatted += "END OF FLYBASE INFO\n"
-        formatted += "="*70 + "\n\n"
-        
-        return formatted
-    
-    def extract_gene_names(self, text: str) -> List[str]:
-        """Extract potential gene names from user query"""
-        potential_genes = []
-        
-        exclude_words = {
-            'aging', 'gene', 'genes', 'protein', 'proteins', 'the', 'a', 'an', 
-            'this', 'that', 'what', 'how', 'why', 'when', 'where', 'who',
-            'is', 'are', 'was', 'were', 'be', 'been', 'being',
-            'do', 'does', 'did', 'have', 'has', 'had',
-            'can', 'could', 'will', 'would', 'should', 'may', 'might',
-            'tell', 'find', 'show', 'give', 'make', 'take',
-            'top', 'best', 'most', 'many', 'some', 'all',
-            'development', 'signaling', 'pathway', 'function', 'role',
-            'cancer', 'tumor', 'mutation', 'mutant', 'allele',
-            'compare', 'versus', 'vs', 'between', 'and', 'or'
-        }
-        
-        # Pattern 1: "gene X" or "X gene"
-        gene_pattern = r'(?:gene\s+(\w+)|(\w+)\s+gene)'
-        matches = re.findall(gene_pattern, text, re.IGNORECASE)
-        for match in matches:
-            gene = match[0] or match[1]
-            if gene and gene.lower() not in exclude_words:
-                potential_genes.append(gene)
-        
-        # Pattern 2: "what is X"
-        what_pattern = r'what\s+(?:is|does)\s+(\w+)'
-        matches = re.findall(what_pattern, text, re.IGNORECASE)
-        for match in matches:
-            if match.lower() not in exclude_words:
-                potential_genes.append(match)
-        
-        # Pattern 3: "tell me about X"
-        tell_pattern = r'(?:tell me about|about)\s+(\w+)'
-        matches = re.findall(tell_pattern, text, re.IGNORECASE)
-        for match in matches:
-            if match.lower() not in exclude_words:
-                potential_genes.append(match)
-        
-        # Pattern 4: "compare X and Y"
-        compare_pattern = r'(?:compare|versus|vs\.?)\s+(\w+)\s+(?:and|versus|vs\.?)\s+(\w+)'
-        matches = re.findall(compare_pattern, text, re.IGNORECASE)
-        for match in matches:
-            if match[0].lower() not in exclude_words:
-                potential_genes.append(match[0])
-            if match[1].lower() not in exclude_words:
-                potential_genes.append(match[1])
-        
-        # Pattern 5: Common Drosophila genes
-        common_genes = ['notch', 'delta', 'wingless', 'hedgehog', 'decapentaplegic', 
-                       'engrailed', 'even-skipped', 'fushi-tarazu', 'white', 'yellow',
-                       'sevenless', 'bride', 'boss', 'torpedo', 'gurken', 'oskar',
-                       'nanos', 'pumilio', 'bicoid', 'hunchback', 'kruppel', 'giant',
-                       'knirps', 'tailless', 'p53', 'ras', 'myc', 'src', 'abl',
-                       'inr', 'dfoxo', 'foxo', 'sir2', 'rpd3', 'mth', 'methuselah',
-                       'sod', 'catalase', 'tor', 'pten', 'pi3k', 'akt', 'dmp53',
-                       'jak', 'stat', 'egfr', 'insulin', 'dilp']
-        
-        text_lower = text.lower()
-        for gene in common_genes:
-            if gene in text_lower:
-                potential_genes.append(gene)
-        
-        # Return unique genes
-        unique_genes = []
-        seen = set()
-        for gene in potential_genes:
-            gene_lower = gene.lower()
-            if gene_lower not in seen and gene_lower not in exclude_words:
-                unique_genes.append(gene)
-                seen.add(gene_lower)
-        
-        return unique_genes[:5]
     
     def chat(self, user_message):
-        """Chat with Claude, searching FlyBase first, then supplementing with PubMed"""
+        """Main chat function"""
+        print(f"\n{'='*70}\nQuery: {user_message[:80]}...\n{'='*70}")
         
-        print(f"\n{'='*70}")
-        print(f"User query: {user_message[:100]}...")
-        print(f"{'='*70}")
-        
-        publication_context = ""
-        flybase_context = ""
         all_papers = []
+        gene_context = ""
         
-        # Step 1: Extract genes and get FlyBase publications
-        print("🧬 Checking for gene mentions...")
-        potential_genes = self.extract_gene_names(user_message)
+        # Extract and lookup genes
+        genes = self.extract_gene_names(user_message)
+        for gene in genes:
+            gene_info = search_flybase_fixed(gene)
+            if gene_info:
+                num_papers = self.determine_paper_count(user_message)
+                pubs = self.get_flybase_publications(gene_info['fbgn'], max_results=num_papers)
+                if pubs:
+                    all_papers.extend(pubs)
         
-        if potential_genes:
-            print(f"  Potential genes detected: {potential_genes}")
-            genes_found = 0
-            
-            for gene in potential_genes:
-                gene_info = self.search_flybase_with_variants(gene)
-                if gene_info:
-                    flybase_context += self.format_flybase_info(gene_info)
-                    genes_found += 1
-                    
-                    num_papers = self.determine_paper_count(user_message)
-                    flybase_pubs = self.get_flybase_publications(gene_info['fbgn'], max_results=num_papers)
-                    
-                    if flybase_pubs:
-                        all_papers.extend(flybase_pubs)
-                        print(f"  ✅ Got {len(flybase_pubs)} publications from FlyBase for {gene_info['symbol']}")
-                    
-                    if genes_found >= 3 and 'compare' not in user_message.lower():
-                        break
-            
-            if genes_found > 0:
-                print(f"  ✅ Found {genes_found} gene(s) in FlyBase")
-        else:
-            print("  ℹ️  No specific gene names detected")
+        # Supplement with PubMed if needed
+        num_needed = self.determine_paper_count(user_message)
+        if len(all_papers) < num_needed:
+            pubmed_papers = self.search_pubmed(user_message, max_results=num_needed - len(all_papers))
+            all_papers.extend(pubmed_papers)
         
-        # Step 2: Supplement with PubMed if needed
-        num_papers_needed = self.determine_paper_count(user_message)
+        # Format papers
+        publication_context = self.format_papers(all_papers) if all_papers else ""
         
-        if len(all_papers) < num_papers_needed:
-            print(f"📚 Supplementing with PubMed (need {num_papers_needed - len(all_papers)} more papers)...")
-            pubmed_papers = self.search_pubmed(user_message, max_results=num_papers_needed - len(all_papers))
-            
-            if pubmed_papers:
-                all_papers.extend(pubmed_papers)
-                print(f"  ✅ Added {len(pubmed_papers)} papers from PubMed")
-        
-        # Format all papers
-        if all_papers:
-            publication_context = self.format_papers_for_claude(all_papers)
-        else:
-            print("  ℹ️  No publications found from any source")
-            publication_context = "\n" + "="*70 + "\n"
-            publication_context += "PUBLICATION SEARCH RESULT\n"
-            publication_context += "="*70 + "\n\n"
-            publication_context += "No publications were found from FlyBase or PubMed for this query.\n"
-            publication_context += "You may answer from your knowledge base and note that no recent papers were found.\n"
-            publication_context += "\n" + "="*70 + "\n"
-        
-        # Build system prompt
-        system_prompt = """You are a specialized AI assistant for Drosophila melanogaster (fruit fly) research.
-
-Your expertise includes:
-- Drosophila genetics, development, and molecular biology
-- Gene nomenclature and function
-- Experimental techniques in fly research
-- Classic and modern Drosophila studies
-- Developmental biology and signaling pathways
-
-IMPORTANT: For EVERY user query, the system automatically searches:
-1. FlyBase for gene information and curated publications (prioritized and ranked by FlyBase)
-2. PubMed for additional recent publications (if needed)
-
-PUBLICATION RANKING:
-- Papers from FlyBase are shown with their FlyBase rank (these are curated and prioritized by experts)
-- Papers from PubMed are shown with relevance scores
-- FlyBase papers should be given higher weight in your response as they are expert-curated
-
-CRITICAL GENETIC PATHWAY EMPHASIS:
-
-When discussing genes and their functions, you MUST emphasize:
-
-**1. PATHWAY CONTEXT:**
-   - Identify which signaling pathway(s) the gene belongs to
-   - Describe upstream regulators and downstream targets
-   - Explain how the gene fits into the broader regulatory network
-   - Mention key pathway interactions (activators, inhibitors, feedback loops)
-
-**2. ORTHOLOGUES AND CONSERVATION:**
-   - Always mention mammalian/human orthologues when known
-   - Discuss conservation of function across species
-   - Highlight what fly research has taught us about human biology
-   - Note any differences between fly and mammalian systems
-
-**3. DEVELOPMENTAL AND TISSUE CONTEXT:**
-   - Specify when and where the gene is expressed
-   - Describe developmental stages or tissues affected
-   - Explain temporal regulation if relevant
-   - Connect to specific biological processes
-
-**4. FUNCTIONAL RELATIONSHIPS:**
-   - Describe genetic interactions (synthetic lethality, suppression, enhancement)
-   - Identify parallel pathways or redundant functions
-   - Note epistatic relationships
-   - Mention compensatory mechanisms
-
-**5. CROSS-SPECIES KNOWLEDGE TRANSFER:**
-   - Explicitly connect fly findings to broader biology
-   - Discuss how fly models inform disease research
-   - Highlight conserved mechanisms discovered in Drosophila
-   - Note clinical relevance where applicable
-
-CRITICAL FORMATTING INSTRUCTIONS:
-
-**NEVER use HTML tags in your response.** Always use Markdown formatting:
-- For links: Use [Link Text](URL) format
-- For emphasis: Use **bold** for important terms
-- For pathway names: Use **bold** to highlight them
-
-CITATION INSTRUCTIONS:
-
-**IF you see "RELEVANT PUBLICATIONS" with papers listed:**
-   ✅ Papers were found - you MUST cite them!
-   - PRIORITIZE papers from FlyBase (marked with "FlyBase Rank") over PubMed papers
-   - FlyBase papers are expert-curated and should be weighted more heavily
-   - Reference papers throughout your answer
-   - Use markdown links: [Author et al., Year](URL)  
-   - Create a "References" section at the end
-   - Format: "1. Author et al. (Year). Title. [View on FlyBase/PubMed](URL)"
-   - Synthesize information from the papers
-   - DO NOT say you don't have access to papers!
-
-**IF you see "No publications found":**
-   ❌ Papers were not found
-   - Answer from your knowledge base
-   - Briefly note: "No recent papers were found for this query"
-   - Continue with your expert knowledge
-   - Suggest alternative search terms if relevant
-
-**IF you see "FLYBASE GENE INFORMATION":**
-   - Use the official gene symbol and FlyBase ID
-   - Include link: [View on FlyBase](URL)
-   - Cite the official information provided
-   - For multiple genes: compare and contrast their functions and pathways
-
-**FOR COMPARISON QUERIES (multiple genes):**
-   - Structure your answer to compare pathway roles
-   - Highlight functional similarities and differences
-   - Discuss potential interactions between the genes
-   - Note if they're in parallel or antagonistic pathways
-
-**General Guidelines:**
-- Lead with pathway and mechanistic context
-- Always mention human relevance and orthologues
-- Prioritize FlyBase-curated publications over PubMed results
-- Be confident when citing papers that ARE provided
-- Don't claim lack of access if papers ARE in the context
-- Synthesize across multiple papers when available
-- Always be accurate and acknowledge true uncertainty
-- Structure responses to emphasize biological pathways and mechanisms
-
-Remember: Your goal is not just to describe what a gene does, but to place it in the context of cellular pathways, evolutionary conservation, and broader biological significance!"""
-
-        # Build enhanced message
+        # Build message
         enhanced_message = user_message
+        if publication_context:
+            enhanced_message += "\n\n" + publication_context
         
-        if publication_context or flybase_context:
-            enhanced_message = f"{user_message}\n\n"
-            if flybase_context:
-                enhanced_message += flybase_context
-            if publication_context:
-                enhanced_message += publication_context
-        
-        # Add to conversation history
-        self.conversation_history.append({
-            "role": "user",
-            "content": enhanced_message
-        })
-        
-        # Limit conversation history
+        self.conversation_history.append({"role": "user", "content": enhanced_message})
         if len(self.conversation_history) > 10:
             self.conversation_history = self.conversation_history[-10:]
         
-        print("🤖 Calling Claude API...")
-        
-        # Call Claude API
+        print("🤖 Calling Claude...")
         response = self.client.messages.create(
             model="claude-sonnet-4-20250514",
             max_tokens=3000,
-            system=system_prompt,
             messages=self.conversation_history
         )
         
         assistant_message = response.content[0].text
+        self.conversation_history.append({"role": "assistant", "content": assistant_message})
         
-        # Add response to history
-        self.conversation_history.append({
-            "role": "assistant",
-            "content": assistant_message
-        })
-        
-        print("✅ Response generated")
-        print(f"{'='*70}\n")
-        
+        print("✅ Response generated\n" + "="*70 + "\n")
         return assistant_message
     
     def reset_conversation(self):
-        """Clear conversation history"""
+        """Clear history"""
         self.conversation_history = []
         self.mentioned_genes = set()
-        self.mentioned_pathways = set()
-        print("🔄 Conversation history cleared")
