@@ -217,7 +217,7 @@ class DrosophilaAssistant:
         try:
             print(f"  📚 Fetching FlyBase publications for {fbgn}...")
             
-            # Try the references endpoint
+            # Method 1: Try API endpoint first
             pub_url = f"https://flybase.org/api/v1.0/gene/{fbgn}/references"
             
             try:
@@ -227,18 +227,161 @@ class DrosophilaAssistant:
                         data = response.json()
                         publications = self._parse_flybase_publications(data, max_results, fbgn)
                         if publications:
-                            print(f"  ✅ Retrieved {len(publications)} publications from FlyBase")
+                            print(f"  ✅ Retrieved {len(publications)} publications from FlyBase API")
                             return publications
                     except ValueError:
                         pass
             except requests.exceptions.RequestException:
                 pass
             
+            # Method 2: Web scrape the gene report page
+            print(f"  🔄 API failed, trying web scraping...")
+            publications = self._scrape_flybase_publications(fbgn, max_results)
+            if publications:
+                print(f"  ✅ Retrieved {len(publications)} publications from FlyBase (web scraping)")
+                return publications
+            
             print(f"  ℹ️  No publications available from FlyBase for {fbgn}")
             return []
             
         except Exception as e:
             print(f"  ⚠️  Error fetching FlyBase publications: {e}")
+            return []
+    
+    def _scrape_flybase_publications(self, fbgn: str, max_results: int = 10) -> List[Dict]:
+        """
+        Scrape publications from FlyBase gene report page.
+        Extracts PMIDs and FBrf IDs from the HTML.
+        """
+        try:
+            url = f"https://flybase.org/reports/{fbgn}"
+            response = requests.get(url, timeout=15)
+            
+            if response.status_code != 200:
+                return []
+            
+            soup = BeautifulSoup(response.text, 'html.parser')
+            publications = []
+            
+            # Method 1: Find PMIDs in the page
+            pmid_pattern = r'PMID[:\s]*(\d+)'
+            pmids = re.findall(pmid_pattern, response.text, re.IGNORECASE)
+            
+            # Method 2: Find FBrf IDs (FlyBase reference IDs)
+            fbrf_pattern = r'(FBrf\d{7})'
+            fbrfs = re.findall(fbrf_pattern, response.text)
+            
+            # Get unique PMIDs (preserve order, which is FlyBase's ranking)
+            seen_pmids = set()
+            unique_pmids = []
+            for pmid in pmids:
+                if pmid not in seen_pmids:
+                    unique_pmids.append(pmid)
+                    seen_pmids.add(pmid)
+            
+            # Get unique FBrf IDs
+            seen_fbrfs = set()
+            unique_fbrfs = []
+            for fbrf in fbrfs:
+                if fbrf not in seen_fbrfs:
+                    unique_fbrfs.append(fbrf)
+                    seen_fbrfs.add(fbrf)
+            
+            # If we found PMIDs, fetch their details from PubMed
+            if unique_pmids:
+                print(f"    Found {len(unique_pmids)} PMIDs from FlyBase, fetching details...")
+                
+                # Limit to max_results
+                pmids_to_fetch = unique_pmids[:max_results]
+                
+                # Fetch details from PubMed for these PMIDs
+                try:
+                    handle = Entrez.efetch(db="pubmed", id=pmids_to_fetch, rettype="abstract", retmode="xml")
+                    records = Entrez.read(handle)
+                    handle.close()
+                    
+                    for i, article in enumerate(records['PubmedArticle']):
+                        try:
+                            medline = article['MedlineCitation']
+                            article_data = medline['Article']
+                            
+                            title = article_data.get('ArticleTitle', 'No title')
+                            abstract = article_data.get('Abstract', {}).get('AbstractText', ['No abstract available'])
+                            if isinstance(abstract, list):
+                                abstract = ' '.join(str(text) for text in abstract)
+                            
+                            authors = []
+                            if 'AuthorList' in article_data:
+                                for author in article_data['AuthorList'][:3]:
+                                    if 'LastName' in author:
+                                        authors.append(f"{author.get('LastName', '')} {author.get('Initials', '')}")
+                            
+                            pmid = str(medline['PMID'])
+                            
+                            year = 'N/A'
+                            if 'ArticleDate' in article_data and article_data['ArticleDate']:
+                                year = article_data['ArticleDate'][0].get('Year', 'N/A')
+                            elif 'Journal' in article_data and 'JournalIssue' in article_data['Journal']:
+                                pub_date = article_data['Journal']['JournalIssue'].get('PubDate', {})
+                                year = pub_date.get('Year', 'N/A')
+                            
+                            # Try to match with FBrf ID if available
+                            fbrf = unique_fbrfs[i] if i < len(unique_fbrfs) else ''
+                            
+                            pub = {
+                                'title': title,
+                                'authors': ', '.join(authors) + ' et al.' if authors else 'Unknown authors',
+                                'year': year,
+                                'pmid': pmid,
+                                'fbrf': fbrf,
+                                'abstract': abstract[:500] + '...' if len(abstract) > 500 else abstract,
+                                'url': f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
+                                'source': 'FlyBase',
+                                'flybase_rank': i + 1  # Preserve order from FlyBase page
+                            }
+                            publications.append(pub)
+                            
+                        except Exception as e:
+                            print(f"    ⚠️  Error parsing publication {i+1}: {e}")
+                            continue
+                    
+                except Exception as e:
+                    print(f"    ⚠️  Error fetching PubMed details: {e}")
+                    # Fallback: return basic info without full details
+                    for i, pmid in enumerate(pmids_to_fetch):
+                        fbrf = unique_fbrfs[i] if i < len(unique_fbrfs) else ''
+                        publications.append({
+                            'title': f'Publication PMID:{pmid}',
+                            'authors': 'See PubMed',
+                            'year': 'N/A',
+                            'pmid': pmid,
+                            'fbrf': fbrf,
+                            'abstract': 'Details available on PubMed',
+                            'url': f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
+                            'source': 'FlyBase',
+                            'flybase_rank': i + 1
+                        })
+            
+            # If no PMIDs but we have FBrf IDs, use those
+            elif unique_fbrfs:
+                print(f"    Found {len(unique_fbrfs)} FBrf IDs from FlyBase")
+                for i, fbrf in enumerate(unique_fbrfs[:max_results]):
+                    publications.append({
+                        'title': f'FlyBase Reference {fbrf}',
+                        'authors': 'See FlyBase',
+                        'year': 'N/A',
+                        'pmid': '',
+                        'fbrf': fbrf,
+                        'abstract': 'Details available on FlyBase',
+                        'url': f"https://flybase.org/reports/{fbrf}",
+                        'source': 'FlyBase',
+                        'flybase_rank': i + 1
+                    })
+            
+            return publications
+            
+        except Exception as e:
+            print(f"    ⚠️  Web scraping error: {e}")
             return []
     
     def _parse_flybase_publications(self, data: Dict, max_results: int, fbgn: str) -> List[Dict]:
