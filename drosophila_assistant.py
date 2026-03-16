@@ -501,7 +501,17 @@ class DrosophilaAssistant:
         has_prior_context = bool(self.last_topic or self.last_papers)
         is_planning, confidence = detect_planning_intent(user_message, has_prior_context)
 
-        if force_planning or is_planning or (self.awaiting_clarification and self.planning_mode):
+        # If awaiting clarification, only route to planner if message looks like
+        # an answer (short, descriptive) rather than a new research question.
+        is_clarification_answer = (
+            self.awaiting_clarification
+            and self.planning_mode
+            and not is_planning  # not a new planning request
+            and len(user_message.split()) < 60  # reasonably short
+            and '?' not in user_message[:20]  # doesn't start as a question
+        )
+
+        if force_planning or is_planning or is_clarification_answer:
             self.planning_mode = True
             result = self.handle_planning_request(user_message, force=force_planning)
 
@@ -520,6 +530,7 @@ class DrosophilaAssistant:
 
         # ── Normal chat mode ──────────────────────────────────────────────────
         self.planning_mode = False
+        self.awaiting_clarification = False  # reset if user went back to normal chat
         all_papers = []
 
         genes = self.extract_gene_names(user_message)
