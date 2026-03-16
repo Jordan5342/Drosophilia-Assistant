@@ -427,14 +427,33 @@ Packer.toBuffer(doc).then(buffer => {{
 }});
 """
 
-        # Write and run
+        # Ensure docx npm package is available — install to /tmp if needed
+        node_modules_path = "/tmp/node_modules"
+        docx_check = os.path.join(node_modules_path, "docx")
+        if not os.path.exists(docx_check):
+            print("  Installing docx npm package to /tmp...")
+            install_result = subprocess.run(
+                ['npm', 'install', '--prefix', '/tmp', 'docx'],
+                capture_output=True, text=True, timeout=60
+            )
+            if install_result.returncode != 0:
+                print(f"npm install error: {install_result.stderr}")
+                return jsonify({'error': f'Failed to install docx package: {install_result.stderr}'}), 500
+            print("  docx installed")
+
+        # Write script
         script_path = f"/tmp/gen_proposal_{timestamp}.js"
         with open(script_path, 'w') as f:
             f.write(node_script)
 
+        # Run with NODE_PATH pointing to /tmp/node_modules
+        env = os.environ.copy()
+        env['NODE_PATH'] = node_modules_path
+
         result = subprocess.run(
             ['node', script_path],
-            capture_output=True, text=True, timeout=30
+            capture_output=True, text=True, timeout=30,
+            env=env
         )
 
         os.unlink(script_path)
