@@ -401,6 +401,83 @@ class DrosophilaAssistant:
         formatted += "="*70 + "\n\n"
         return formatted
 
+    def fetch_literature_for_proposal(self, topic: str, genes: List[str], user_clarifications: str = "") -> List[Dict]:
+        """
+        Dedicated literature fetch for proposal generation.
+        Runs multiple targeted PubMed searches to get 10-15 relevant papers.
+        Much more thorough than the normal chat paper fetch.
+        """
+        print(f"  📚 Fetching dedicated proposal literature...")
+        all_papers = []
+        seen_pmids = set()
+
+        def add_papers(new_papers):
+            for p in new_papers:
+                pmid = p.get('pmid', '')
+                if pmid and pmid not in seen_pmids:
+                    seen_pmids.add(pmid)
+                    all_papers.append(p)
+
+        # Search 1: Gene-specific FlyBase lookups
+        for gene in genes[:3]:
+            gene_info = search_flybase_fixed(gene)
+            if gene_info:
+                pubs = self.get_flybase_publications(gene_info['fbgn'], max_results=6)
+                add_papers(pubs)
+                print(f"    FlyBase {gene}: {len(pubs)} papers")
+
+        # Search 2: Gene + aging
+        for gene in genes[:2]:
+            papers = self.search_pubmed(f"{gene} aging lifespan longevity", max_results=5)
+            add_papers(papers)
+
+        # Search 3: Topic-specific searches
+        topic_queries = []
+
+        # Extract key biological terms from topic + clarifications
+        combined = f"{topic} {user_clarifications}".lower()
+
+        if any(w in combined for w in ['lifespan', 'longevity', 'aging', 'ageing']):
+            topic_queries.append("Drosophila lifespan extension insulin signaling FOXO")
+        if any(w in combined for w in ['locomotor', 'climbing', 'movement', 'motor']):
+            topic_queries.append("Drosophila locomotor aging decline")
+        if any(w in combined for w in ['fat body', 'adipose', 'metabolic']):
+            topic_queries.append("Drosophila fat body aging metabolism")
+        if any(w in combined for w in ['neuron', 'brain', 'cognitive', 'memory', 'neural']):
+            topic_queries.append("Drosophila neuronal aging brain")
+        if any(w in combined for w in ['sleep']):
+            topic_queries.append("Drosophila sleep aging circadian")
+        if any(w in combined for w in ['gut', 'intestin']):
+            topic_queries.append("Drosophila gut aging intestine stem cell")
+        if any(w in combined for w in ['muscle', 'sarcopenia']):
+            topic_queries.append("Drosophila muscle aging sarcopenia")
+        if any(w in combined for w in ['stress', 'oxidative', 'ros']):
+            topic_queries.append("Drosophila oxidative stress resistance aging")
+        if any(w in combined for w in ['autophagy', 'atg']):
+            topic_queries.append("Drosophila autophagy aging lifespan")
+        if any(w in combined for w in ['tor', 'rapamycin', 'mtor']):
+            topic_queries.append("Drosophila TOR signaling aging rapamycin")
+        if any(w in combined for w in ['foxo', 'forkhead']):
+            topic_queries.append("Drosophila FOXO transcription factor lifespan")
+        if any(w in combined for w in ['inr', 'insulin', 'dilp', 'igf']):
+            topic_queries.append("Drosophila insulin signaling InR aging lifespan")
+
+        # Default broad search if no specific matches
+        if not topic_queries:
+            topic_queries = [f"Drosophila {topic} aging"]
+
+        for query in topic_queries[:4]:  # limit to 4 topic searches
+            papers = self.search_pubmed(query, max_results=4)
+            add_papers(papers)
+            print(f"    PubMed '{query[:50]}': {len(papers)} papers")
+
+        # Search 4: Key review papers — always useful for proposals
+        review_papers = self.search_pubmed("Drosophila aging review mechanisms longevity", max_results=3)
+        add_papers(review_papers)
+
+        print(f"  ✅ Total unique papers for proposal: {len(all_papers)}")
+        return all_papers[:15]  # cap at 15 to avoid token overflow
+
     def handle_planning_request(self, user_message: str, force: bool = False) -> Dict:
         """
         Handle a research planning request. Returns a dict with:
@@ -440,11 +517,55 @@ class DrosophilaAssistant:
         # If we're awaiting clarification, use this message as the clarification and generate
         if self.awaiting_clarification:
             self.awaiting_clarification = False
-            print("  📝 Using clarification to generate proposal...")
+            print("  📝 Received clarification — fetching dedicated literature...")
+
+            proposal_topic = self.planner.proposal_context.get('topic', topic)
+            proposal_genes = self.planner.proposal_context.get('genes', genes)
+
+            # Run a thorough dedicated literature search using clarification context
+            proposal_papers = self.fetch_literature_for_proposal(
+                topic=proposal_topic,
+                genes=proposal_genes,
+                user_clarifications=user_message
+            )
+
+            # Merge with any cached papers, deduplicate by PMID
+            cached = self.planner.proposal_context.get('papers', [])
+            seen = {p.get('pmid') for p in proposal_papers if p.get('pmid')}
+            for p in cached:
+                if p.get('pmid') not in seen:
+                    proposal_papers.append(p)
+                    seen.add(p.get('pmid'))
+
+            MIN_PAPERS = 4
+            if len(proposal_papers) < MIN_PAPERS:
+                # Not enough literature — warn user instead of generating a thin proposal
+                found = len(proposal_papers)
+                return {
+                    'type': 'clarification',
+                    'content': (
+                        f"⚠️ **Literature too thin to generate a strong proposal.**\n\n"
+                        f"I searched PubMed and FlyBase but only found **{found} paper(s)** "
+                        f"relevant to *{proposal_topic}*. A well-cited proposal needs at least {MIN_PAPERS}.\n\n"
+                        f"A few options:\n"
+                        f"- **Chat with me first** about your topic (e.g. *'What is known about FOXO in fat body aging?'*) "
+                        f"to pull more papers, then click Plan Research\n"
+                        f"- **Share specific papers** you already know — paste a PMID or title and I'll incorporate them\n"
+                        f"- **Broaden your topic** slightly if it's very niche\n\n"
+                        f"What would you like to do?"
+                    ),
+                    'proposal': None,
+                    'ready_for_export': False
+                }
+
+            print(f"  ✅ Generating proposal with {len(proposal_papers)} papers...")
+            # Update the planner context with the enriched paper set
+            self.planner.set_context_from_chat(proposal_topic, proposal_genes, proposal_papers)
+
             proposal = self.planner.generate_proposal(
-                topic=self.planner.proposal_context.get('topic', topic),
-                genes=self.planner.proposal_context.get('genes', genes),
-                papers=self.planner.proposal_context.get('papers', papers),
+                topic=proposal_topic,
+                genes=proposal_genes,
+                papers=proposal_papers,
                 user_clarifications=user_message,
                 conversation_history=self.conversation_history
             )
