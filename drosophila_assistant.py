@@ -456,36 +456,20 @@ class DrosophilaAssistant:
                 'ready_for_export': True
             }
 
-        # Decide: ask clarifying question or go straight to proposal?
-        # If we have good context (genes + papers), generate directly
-        if genes and papers:
-            print("  ✅ Good context — generating proposal directly...")
-            self.planner.set_context_from_chat(topic, genes, papers)
-            proposal = self.planner.generate_proposal(
-                topic=topic,
-                genes=genes,
-                papers=papers,
-                conversation_history=self.conversation_history
-            )
-            formatted = self.planner.format_proposal_for_chat(proposal)
-            return {
-                'type': 'proposal',
-                'content': formatted,
-                'proposal': proposal,
-                'ready_for_export': True
-            }
-        else:
-            # Ask a clarifying question first
-            print("  ❓ Asking clarifying question...")
-            question = self.planner.generate_clarifying_questions(topic, genes)
-            self.planner.set_context_from_chat(topic, genes, papers)
-            self.awaiting_clarification = True
-            return {
-                'type': 'clarification',
-                'content': f"🔬 **Research Planner activated!**\n\nBefore I build your proposal, {question}",
-                'proposal': None,
-                'ready_for_export': False
-            }
+        # Always ask clarifying questions on first proposal generation.
+        # Only skip if we already asked and are now receiving the answer (awaiting_clarification).
+        # Having genes + papers is not sufficient — we need researcher-specific context
+        # to avoid generic proposals.
+        print("  ❓ Asking clarifying questions for better specificity...")
+        question = self.planner.generate_clarifying_questions(topic, genes)
+        self.planner.set_context_from_chat(topic, genes, papers)
+        self.awaiting_clarification = True
+        return {
+            'type': 'clarification',
+            'content': f"🔬 **Research Planner activated!**\n\nBefore I build your proposal, {question}",
+            'proposal': None,
+            'ready_for_export': False
+        }
 
     def chat(self, user_message: str, force_planning: bool = False) -> Dict:
         """

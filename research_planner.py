@@ -82,22 +82,26 @@ class ResearchPlanner:
 
     def generate_clarifying_questions(self, topic: str, genes: List[str]) -> str:
         """
-        Ask 1-2 targeted questions before generating the proposal.
-        Only fires when topic is ambiguous or critical info is missing.
+        Ask thorough clarifying questions before generating the proposal.
+        More questions = better proposal. Err on the side of asking more.
         """
-        gene_str = ', '.join(genes) if genes else 'the gene(s) of interest'
+        gene_str = ', '.join(genes) if genes else 'not yet specified'
 
-        prompt = f"""A researcher wants to build a Drosophila research proposal about: "{topic}"
-Identified genes: {gene_str}
+        prompt = f"""A grad student or postdoc wants to build a Drosophila research proposal about: "{topic}"
+Identified genes so far: {gene_str}
 
-Generate 1-2 SHORT clarifying questions (not more) that would meaningfully improve the proposal.
-Focus on: (1) specific phenotype or biological question they care about, (2) available techniques or lab resources if unclear.
-Do NOT ask if the info is already obvious from the topic.
-Format as a brief friendly message, not a list. Keep it under 60 words total."""
+You need to ask clarifying questions to write a specific, non-generic proposal. Ask about ALL of the following that are not already clear from the topic:
+1. The specific phenotype or biological readout (e.g. lifespan? sleep duration? locomotor decline? metabolic rate? memory?)
+2. Which tissue or cell type is the focus (e.g. fat body, neurons, gut, muscle, whole animal?)
+3. What genetic tools they have access to (specific GAL4 lines, UAS-RNAi stocks, CRISPR capability, specific mutant stocks?)
+4. Whether they have any preliminary data or a key paper already in mind that should anchor the proposal
+5. The scope of the project (lab rotation, thesis chapter, grant application?)
+
+Format as a friendly conversational paragraph asking 3-4 of these questions. More information leads to a better proposal so do not be shy about asking. Be direct and specific. Keep it under 120 words."""
 
         response = self.client.messages.create(
             model="claude-sonnet-4-20250514",
-            max_tokens=200,
+            max_tokens=300,
             messages=[{"role": "user", "content": prompt}]
         )
         return response.content[0].text
@@ -139,57 +143,80 @@ Format as a brief friendly message, not a list. Keep it under 60 words total."""
                     content = content.split('\n\n')[0]
                 chat_context += f"{role}: {content[:300]}\n"
 
-        system_prompt = """You are an expert Drosophila researcher and scientific writing specialist helping grad students and postdocs build rigorous research proposals.
+        # Assess literature quality to calibrate specificity
+        has_strong_literature = len(papers) >= 3
+        literature_warning = ""
+        if not has_strong_literature:
+            literature_warning = """
+IMPORTANT: The literature provided is thin (fewer than 3 papers). This means:
+- Do NOT pad the background with generic textbook descriptions of pathways
+- Be explicit about what is actually known vs. what is assumed
+- Flag major gaps honestly rather than writing around them
+- The background should be shorter and more honest rather than longer and generic
+- Ask the reader to consult additional literature in the gaps section
+"""
 
-Generate a complete, scientifically rigorous generic academic research proposal in JSON format.
+        system_prompt = f"""You are an expert Drosophila researcher and scientific writing specialist helping grad students and postdocs build rigorous, specific research proposals.
+
+Generate a complete research proposal in JSON format. The proposal must be specific and grounded — not generic.
 
 CRITICAL RULES:
-1. Cite the provided papers using [1], [2], etc. notation throughout
-2. If a section has thin literature, explicitly flag it as: "⚠️ LITERATURE GAP: [description]" — these are research opportunities
-3. Be specific about Drosophila techniques (GAL4/UAS, CRISPR, behavioral assays, genetic screens, etc.)
-4. The hypothesis must be testable and falsifiable
-5. Pitfalls must be specific and include mitigation strategies
-6. Timeline must be realistic for academic research
+1. Cite the provided papers using [1], [2], etc. throughout. If fewer than 3 papers are provided, acknowledge this explicitly.
+2. NEVER pad sections with generic pathway descriptions (e.g. "The insulin signaling pathway is conserved across species..."). Every sentence must be specific to the research question.
+3. If literature is thin, flag it honestly: "⚠️ LITERATURE GAP: [specific gap]" and keep that section shorter rather than filling it with textbook knowledge.
+4. Experimental approaches must name SPECIFIC tools: exact GAL4 drivers, specific UAS lines, specific assays with parameters (e.g. "CAFE assay measuring food intake at days 5, 15, 30").
+5. The hypothesis must be falsifiable and specific — not "X affects aging" but "Loss of X in adult fat body neurons will extend median lifespan by >15% through upregulation of autophagy markers Atg1 and Atg8."
+6. Pitfalls must be specific to THIS experiment, not generic lab advice.
+7. Timeline must be realistic for the stated scope.
+{literature_warning}
 
 Return ONLY valid JSON with this exact structure:
-{
+{{
   "title": "Full descriptive proposal title",
-  "background": "2-3 paragraphs covering what is known, key findings, and why this matters. Cite papers heavily. Flag any gaps.",
-  "central_hypothesis": "One clear, testable hypothesis statement",
+  "background": "2-3 paragraphs covering what is specifically known about this gene/phenotype combination. Cite papers. Flag gaps honestly. Do NOT use generic pathway descriptions.",
+  "central_hypothesis": "One specific, testable, falsifiable hypothesis with predicted magnitude of effect",
   "null_hypothesis": "The corresponding null hypothesis",
-  "rationale": "Why this hypothesis is worth testing (2-3 sentences)",
+  "rationale": "Why THIS specific question is worth asking now — what gap does it fill? (2-3 sentences)",
   "specific_aims": [
-    {
+    {{
       "aim_number": 1,
       "title": "Short aim title",
-      "objective": "What this aim will accomplish",
-      "approach": "Specific experimental methods",
-      "expected_outcomes": "What you expect to find and why",
-      "potential_pitfalls": "What could go wrong",
-      "mitigation": "How to address those pitfalls"
-    }
+      "objective": "Precise objective for this aim",
+      "approach": "Specific methods with named tools, strains, assay parameters, and sample sizes",
+      "expected_outcomes": "Specific predicted results with measurable endpoints",
+      "potential_pitfalls": "Pitfalls specific to this aim and approach",
+      "mitigation": "Specific mitigation strategies"
+    }}
   ],
-  "experimental_approach": "Overview of the overall experimental strategy, including key Drosophila strains, tools, and readouts",
-  "controls": "Key positive and negative controls",
+  "experimental_approach": "Overview naming specific Drosophila strains, GAL4 drivers, UAS lines, and primary readouts",
+  "controls": "Specific positive and negative controls for each major experiment",
   "timeline": [
-    {"phase": "Phase 1 (Months 1-4)", "milestones": "Key milestones for this phase"},
-    {"phase": "Phase 2 (Months 5-10)", "milestones": "Key milestones"},
-    {"phase": "Phase 3 (Months 11-16)", "milestones": "Key milestones"}
+    {{"phase": "Phase 1 (Months 1-4)", "milestones": "Specific milestones"}},
+    {{"phase": "Phase 2 (Months 5-10)", "milestones": "Specific milestones"}},
+    {{"phase": "Phase 3 (Months 11-16)", "milestones": "Specific milestones"}}
   ],
-  "literature_gaps": ["Gap 1 description", "Gap 2 description"],
+  "literature_gaps": ["Specific gap 1 with why it matters", "Specific gap 2"],
   "references": [
-    {"number": 1, "citation": "Author et al. (Year). Title. Journal. PMID: XXXXX", "url": "https://..."}
+    {{"number": 1, "citation": "Author et al. (Year). Title. Journal. PMID: XXXXX", "url": "https://..."}}
   ]
-}"""
+}}"""
 
+        context_quality = "STRONG" if has_strong_literature else "LIMITED"
         user_prompt = f"""Create a research proposal for the following:
 
 Topic: {topic}
 Key genes/proteins: {gene_str}{clarification_str}
+Literature context quality: {context_quality} ({len(papers)} papers retrieved)
 {paper_context}
 {chat_context}
 
-Generate 2-3 specific aims. Make the proposal scientifically rigorous and grounded in the provided literature. Flag literature gaps explicitly."""
+REQUIREMENTS:
+- Generate 2-3 specific aims with concrete experimental approaches
+- If literature context is LIMITED, be honest and specific about what is unknown rather than padding with generic pathway descriptions
+- Every experimental approach must name specific strains, drivers, or assay parameters
+- The hypothesis must include a predicted measurable outcome
+- Flag real literature gaps — do not write around them with textbook knowledge"""
+
 
         response = self.client.messages.create(
             model="claude-sonnet-4-20250514",
