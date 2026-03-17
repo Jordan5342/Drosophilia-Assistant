@@ -149,11 +149,11 @@ Format as a friendly conversational paragraph asking 3-4 of these questions. Mor
         if not has_strong_literature:
             literature_warning = """
 IMPORTANT: The literature provided is thin (fewer than 3 papers). This means:
-- Do NOT pad the background with generic textbook descriptions of pathways
-- Be explicit about what is actually known vs. what is assumed
+- Do NOT include uncited generic pathway descriptions — every claim needs a citation
+- You MAY use well-established textbook/review knowledge but you MUST add it to the references section with author and year
+- Be explicit about what is specifically known for this gene/phenotype vs. what is extrapolated from related work
 - Flag major gaps honestly rather than writing around them
-- The background should be shorter and more honest rather than longer and generic
-- Ask the reader to consult additional literature in the gaps section
+- Suggest specific papers or databases the researcher should consult in the gaps section
 """
 
         system_prompt = f"""You are an expert Drosophila researcher and scientific writing specialist helping grad students and postdocs build rigorous, specific research proposals.
@@ -162,7 +162,7 @@ Generate a complete research proposal in JSON format. The proposal must be speci
 
 CRITICAL RULES:
 1. Cite the provided papers using [1], [2], etc. throughout. If fewer than 3 papers are provided, acknowledge this explicitly.
-2. NEVER pad sections with generic pathway descriptions (e.g. "The insulin signaling pathway is conserved across species..."). Every sentence must be specific to the research question.
+2. Do NOT include unsourced generic statements (e.g. "The insulin signaling pathway is conserved across species..." with no citation). Every factual claim must be cited — either from the provided papers, or from well-established literature (textbooks, review articles) with a proper reference added to the references section. Cited textbook and review knowledge is encouraged and makes for a stronger background. Uncited filler is not acceptable.
 3. If literature is thin, flag it honestly: "⚠️ LITERATURE GAP: [specific gap]" and keep that section shorter rather than filling it with textbook knowledge.
 4. Experimental approaches must name SPECIFIC tools: exact GAL4 drivers, specific UAS lines, specific assays with parameters (e.g. "CAFE assay measuring food intake at days 5, 15, 30").
 5. The hypothesis must be falsifiable and specific — not "X affects aging" but "Loss of X in adult fat body neurons will extend median lifespan by >15% through upregulation of autophagy markers Atg1 and Atg8."
