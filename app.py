@@ -76,6 +76,7 @@ def chat():
                 'is_planning': result['is_planning'],
                 'ready_for_export': result['ready_for_export'],
                 'has_proposal': result['proposal'] is not None,
+                'proposal_json': result['proposal'] if result['proposal'] else None,
                 'timestamp': datetime.now().isoformat()
             })
 
@@ -500,12 +501,16 @@ def design_experiment():
         data = request.get_json()
         session_id = data.get('session_id', 'default')
         aim_number = data.get('aim_number', 1)
+        client_proposal = data.get('proposal', None)  # fallback from browser cache
 
-        if session_id not in conversations:
-            return jsonify({'error': 'No active session found'}), 404
-
-        session_assistant = conversations[session_id]
+        session_assistant = get_session(session_id)
         proposal = session_assistant.planner.get_proposal_for_export()
+
+        # If server lost the proposal (restart), restore from client-side cache
+        if not proposal and client_proposal:
+            print(f"  ♻️  Restoring proposal from client cache")
+            session_assistant.planner.current_proposal = client_proposal
+            proposal = client_proposal
 
         if not proposal:
             return jsonify({'error': 'No proposal found. Generate a proposal first.'}), 404

@@ -800,6 +800,10 @@
                 if (data.ready_for_export && data.has_proposal) {
                     proposalReady = true;
                     enableExportBtn(true);
+                    // Cache proposal JSON in browser for cross-worker resilience
+                    if (data.proposal_json) {
+                        currentProposalData = data.proposal_json;
+                    }
                     // Auto-open proposal panel on first proposal
                     if (!proposalPanelOpen) {
                         openProposalPanel();
@@ -871,6 +875,7 @@
 
     // Track current panel view state
     let currentProposalMarkdown = '';
+    let currentProposalData = null;  // full proposal JSON cached in browser
     let currentAims = [];
     let currentDesignAim = null;
 
@@ -921,7 +926,11 @@
             const res = await fetch('/api/design_experiment', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ session_id: sessionId, aim_number: aimNumber })
+                body: JSON.stringify({
+                    session_id: sessionId,
+                    aim_number: aimNumber,
+                    proposal: currentProposalData  // send cached JSON as fallback
+                })
             });
             const data = await res.json();
 
