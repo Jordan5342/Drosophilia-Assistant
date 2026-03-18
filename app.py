@@ -484,6 +484,48 @@ Packer.toBuffer(doc).then(buffer => {{
         return jsonify({'error': str(e)}), 500
 
 
+
+@app.route('/api/design_experiment', methods=['POST'])
+def design_experiment():
+    """Generate a detailed experiment design for a specific aim."""
+    try:
+        data = request.get_json()
+        session_id = data.get('session_id', 'default')
+        aim_number = data.get('aim_number', 1)
+
+        if session_id not in conversations:
+            return jsonify({'error': 'No active session found'}), 404
+
+        session_assistant = conversations[session_id]
+        proposal = session_assistant.planner.get_proposal_for_export()
+
+        if not proposal:
+            return jsonify({'error': 'No proposal found. Generate a proposal first.'}), 404
+
+        aims = proposal.get('specific_aims', [])
+        aim = next((a for a in aims if a.get('aim_number') == aim_number), None)
+
+        if not aim:
+            return jsonify({'error': f'Aim {aim_number} not found in proposal.'}), 404
+
+        print(f"  🧪 Generating experiment design for Aim {aim_number}...")
+        design = session_assistant.planner.generate_experiment_design(aim, proposal)
+        formatted = session_assistant.planner.format_experiment_design(design)
+
+        return jsonify({
+            'design': design,
+            'formatted': formatted,
+            'aim_number': aim_number,
+            'aim_title': aim.get('title', ''),
+            'status': 'success'
+        })
+
+    except Exception as e:
+        print(f"Design experiment error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/health', methods=['GET'])
 def health():
     return jsonify({

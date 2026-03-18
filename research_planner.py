@@ -367,6 +367,256 @@ Update the proposal accordingly and return the updated version with a changes su
 
         return "\n".join(md)
 
+
+    def generate_experiment_design(self, aim: Dict, proposal: Dict) -> Dict:
+        """
+        Generate a detailed experiment design for a specific aim.
+        Returns a structured dict with all protocol sections.
+        """
+        import json
+
+        aim_num = aim.get('aim_number', 1)
+        aim_title = aim.get('title', '')
+
+        # Pull key context from the proposal
+        genes = []
+        for ref in proposal.get('references', []):
+            pass  # not needed here
+
+        system_prompt = """You are an expert Drosophila researcher generating a detailed, bench-ready experimental protocol for a specific aim from a research proposal.
+
+Generate a complete experiment design in JSON format. This should be specific enough that a graduate student can execute it directly.
+
+CRITICAL RULES:
+1. Cross schemes must specify exact genotypes, which sex carries which chromosome, and how many generations
+2. All timepoints must be specific (exact days, not "early" or "late")
+3. Data collection sheet must be a structured table format (use pipe | notation for columns)
+4. Go/no-go criteria must have specific measurable thresholds
+5. Statistical analysis must name the exact test and software
+6. Be specific about Drosophila husbandry details (vial size, fly density, food type, temperature)
+
+Return ONLY valid JSON with this exact structure:
+{
+  "aim_number": 1,
+  "aim_title": "Short title",
+  "cross_scheme": {
+    "overview": "Brief description of crossing strategy",
+    "parental_genotypes": [
+      {"line": "Line name", "genotype": "Full genotype notation", "source": "Stock center or lab stock", "notes": "Any special handling"}
+    ],
+    "generations": [
+      {"generation": "P (Parental)", "cross": "♀ Genotype A × ♂ Genotype B", "instructions": "Step by step what to do", "timing": "How long, when to collect"}
+    ],
+    "expected_progeny": "Description of progeny classes and how to identify experimental vs control flies",
+    "balancer_notes": "Any notes about balancer chromosomes or selection"
+  },
+  "vial_setup": {
+    "vial_type": "Standard 25mm vial or 50ml bottle",
+    "fly_density": "X flies per vial",
+    "food": "Standard cornmeal-yeast-agar or specific recipe",
+    "temperature": "25°C",
+    "light_cycle": "12:12 LD",
+    "humidity": "~60%",
+    "flipping_schedule": "Every X days",
+    "special_conditions": "Any drug treatments, dietary modifications etc"
+  },
+  "timepoints": [
+    {"day": 0, "action": "What to do", "what_to_collect": "Samples/measurements", "notes": "Any special considerations"}
+  ],
+  "data_collection_sheet": {
+    "description": "What this sheet tracks",
+    "columns": ["Col1", "Col2", "Col3"],
+    "example_row": ["Example value 1", "Example value 2", "Example value 3"],
+    "scoring_criteria": "How to score ambiguous cases"
+  },
+  "statistical_analysis": {
+    "primary_test": "Test name and why",
+    "software": "R / Prism / Python",
+    "sample_size_justification": "Why n=X is sufficient",
+    "censoring_criteria": "When to censor a fly (escaped, contamination etc)",
+    "multiple_comparisons": "How to handle if applicable"
+  },
+  "go_no_go_criteria": [
+    {"checkpoint": "What to check", "timing": "When (e.g. Day 5)", "threshold": "Specific measurable threshold", "if_fail": "What to do if it fails"}
+  ],
+  "troubleshooting": [
+    {"problem": "Common problem", "likely_cause": "Why it happens", "solution": "What to do"}
+  ],
+  "estimated_duration": "Total time from cross setup to data collection complete",
+  "materials_needed": ["Item 1", "Item 2"]
+}"""
+
+        user_prompt = f"""Generate a detailed experiment design for this specific aim:
+
+AIM {aim_num}: {aim_title}
+Objective: {aim.get('objective', '')}
+Approach (from proposal): {aim.get('approach', '')}
+Expected Outcomes: {aim.get('expected_outcomes', '')}
+Potential Pitfalls: {aim.get('potential_pitfalls', '')}
+Mitigation: {aim.get('mitigation', '')}
+
+PROPOSAL CONTEXT:
+Title: {proposal.get('title', '')}
+Experimental Approach: {proposal.get('experimental_approach', '')}
+Controls: {proposal.get('controls', '')}
+
+Generate a complete bench-ready protocol. Be specific about genotypes, timing, and thresholds."""
+
+        response = self.client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=4000,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_prompt}]
+        )
+
+        raw = response.content[0].text
+        clean = re.sub(r'^```(?:json)?\s*', '', raw.strip(), flags=re.MULTILINE)
+        clean = re.sub(r'\s*```$', '', clean.strip(), flags=re.MULTILINE)
+
+        try:
+            design = json.loads(clean)
+        except Exception as e:
+            print(f"  ⚠️  Experiment design JSON parse error: {e}")
+            design = {
+                "aim_number": aim_num,
+                "aim_title": aim_title,
+                "error": "Failed to parse structured design",
+                "raw": raw
+            }
+
+        return design
+
+    def format_experiment_design(self, design: Dict) -> str:
+        """Format experiment design as markdown for display."""
+        md = []
+
+        md.append(f"## 🧪 Experiment Design — Aim {design.get('aim_number', '?')}: {design.get('aim_title', '')}")
+        md.append("")
+
+        if design.get('error'):
+            md.append(design.get('raw', 'Error generating design.'))
+            return "\n".join(md)
+
+        # Estimated duration
+        if design.get('estimated_duration'):
+            md.append(f"⏱️ **Estimated Duration:** {design['estimated_duration']}")
+            md.append("")
+
+        # Cross scheme
+        cs = design.get('cross_scheme', {})
+        if cs:
+            md.append("### 🧬 Cross Scheme")
+            md.append(cs.get('overview', ''))
+            md.append("")
+
+            parents = cs.get('parental_genotypes', [])
+            if parents:
+                md.append("**Parental Lines:**")
+                for p in parents:
+                    md.append(f"- **{p.get('line', '')}:** `{p.get('genotype', '')}` — {p.get('source', '')}  ")
+                    if p.get('notes'):
+                        md.append(f"  *{p['notes']}*")
+                md.append("")
+
+            gens = cs.get('generations', [])
+            if gens:
+                md.append("**Crossing Generations:**")
+                for g in gens:
+                    md.append(f"**{g.get('generation', '')}:** {g.get('cross', '')}")
+                    md.append(f"- {g.get('instructions', '')}")
+                    md.append(f"- *Timing: {g.get('timing', '')}*")
+                md.append("")
+
+            if cs.get('expected_progeny'):
+                md.append(f"**Expected Progeny:** {cs['expected_progeny']}")
+            if cs.get('balancer_notes'):
+                md.append(f"**Balancer Notes:** {cs['balancer_notes']}")
+            md.append("")
+
+        # Vial setup
+        vs = design.get('vial_setup', {})
+        if vs:
+            md.append("### 🫙 Vial Setup & Husbandry")
+            for key, label in [
+                ('vial_type', 'Vial Type'), ('fly_density', 'Fly Density'),
+                ('food', 'Food'), ('temperature', 'Temperature'),
+                ('light_cycle', 'Light Cycle'), ('humidity', 'Humidity'),
+                ('flipping_schedule', 'Flipping Schedule'), ('special_conditions', 'Special Conditions')
+            ]:
+                if vs.get(key):
+                    md.append(f"- **{label}:** {vs[key]}")
+            md.append("")
+
+        # Timepoints
+        timepoints = design.get('timepoints', [])
+        if timepoints:
+            md.append("### 📅 Timepoints & Sampling Schedule")
+            for tp in timepoints:
+                md.append(f"**Day {tp.get('day', '?')}:** {tp.get('action', '')}")
+                if tp.get('what_to_collect'):
+                    md.append(f"- *Collect/Measure:* {tp['what_to_collect']}")
+                if tp.get('notes'):
+                    md.append(f"- *Note:* {tp['notes']}")
+            md.append("")
+
+        # Data collection sheet
+        dcs = design.get('data_collection_sheet', {})
+        if dcs:
+            md.append("### 📊 Data Collection Sheet")
+            md.append(dcs.get('description', ''))
+            cols = dcs.get('columns', [])
+            example = dcs.get('example_row', [])
+            if cols:
+                md.append("| " + " | ".join(cols) + " |")
+                md.append("| " + " | ".join(["---"] * len(cols)) + " |")
+                if example:
+                    md.append("| " + " | ".join(str(e) for e in example) + " |")
+            if dcs.get('scoring_criteria'):
+                md.append(f"\n*Scoring criteria:* {dcs['scoring_criteria']}")
+            md.append("")
+
+        # Statistical analysis
+        sa = design.get('statistical_analysis', {})
+        if sa:
+            md.append("### 📈 Statistical Analysis")
+            for key, label in [
+                ('primary_test', 'Primary Test'), ('software', 'Software'),
+                ('sample_size_justification', 'Sample Size'), ('censoring_criteria', 'Censoring Criteria'),
+                ('multiple_comparisons', 'Multiple Comparisons')
+            ]:
+                if sa.get(key):
+                    md.append(f"- **{label}:** {sa[key]}")
+            md.append("")
+
+        # Go/no-go criteria
+        gng = design.get('go_no_go_criteria', [])
+        if gng:
+            md.append("### 🚦 Go/No-Go Criteria")
+            for g in gng:
+                md.append(f"**{g.get('checkpoint', '')}** *(Check: {g.get('timing', '')})*")
+                md.append(f"- Threshold: {g.get('threshold', '')}")
+                md.append(f"- If fail: {g.get('if_fail', '')}")
+            md.append("")
+
+        # Troubleshooting
+        ts = design.get('troubleshooting', [])
+        if ts:
+            md.append("### 🔧 Troubleshooting")
+            for t in ts:
+                md.append(f"**Problem:** {t.get('problem', '')}")
+                md.append(f"- *Cause:* {t.get('likely_cause', '')}")
+                md.append(f"- *Solution:* {t.get('solution', '')}")
+            md.append("")
+
+        # Materials
+        materials = design.get('materials_needed', [])
+        if materials:
+            md.append("### 🧴 Materials Needed")
+            for m in materials:
+                md.append(f"- {m}")
+
+        return "\n".join(md)
+
     def get_proposal_for_export(self) -> Optional[Dict]:
         """Return current proposal for docx export."""
         return self.current_proposal
