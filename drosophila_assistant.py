@@ -312,6 +312,72 @@ class DrosophilaAssistant:
         except Exception as e:
             return []
 
+    def filter_relevant_papers(self, papers: List[Dict], topic: str, genes: List[str], user_clarifications: str = "") -> List[Dict]:
+        """
+        Filter papers for relevance before passing to the planner.
+        Drops papers that don't mention Drosophila or the core topic.
+        Two-pass: hard filter (must mention Drosophila), then soft score.
+        """
+        if not papers:
+            return []
+
+        combined_context = f"{topic} {user_clarifications}".lower()
+
+        # Build keyword sets
+        drosophila_terms = {'drosophila', 'melanogaster', 'fruit fly', 'flies', 'drosophilid'}
+
+        # Topic keywords extracted from context
+        topic_keywords = set()
+        keyword_map = {
+            'aging': ['aging', 'ageing', 'lifespan', 'longevity', 'senescence', 'gerontology'],
+            'autophagy': ['autophagy', 'atg', 'lysosome', 'autophagosome'],
+            'intestin': ['intestin', 'gut', 'midgut', 'epithelium', 'stem cell'],
+            'foxo': ['foxo', 'forkhead', 'transcription factor'],
+            'insulin': ['insulin', 'igf', 'inr', 'dilp', 'irs'],
+            'tor': ['tor', 'rapamycin', 'mtor', 's6k'],
+            'locomotor': ['locomotor', 'climbing', 'motor', 'movement'],
+            'sleep': ['sleep', 'circadian', 'rhythm'],
+            'neuron': ['neuron', 'neural', 'brain', 'cognitive'],
+            'fat body': ['fat body', 'adipose', 'lipid'],
+            'muscle': ['muscle', 'sarcopenia', 'myopathy'],
+            'stress': ['oxidative stress', 'ros', 'paraquat', 'hydrogen peroxide'],
+        }
+
+        for key, terms in keyword_map.items():
+            if any(k in combined_context for k in [key] + terms[:2]):
+                topic_keywords.update(terms)
+
+        gene_keywords = {g.lower() for g in genes}
+
+        filtered = []
+        for paper in papers:
+            title = (paper.get('title', '') or '').lower()
+            abstract = (paper.get('abstract', '') or '').lower()
+            combined = title + ' ' + abstract
+
+            # Hard filter: must mention Drosophila or fly model
+            has_drosophila = any(term in combined for term in drosophila_terms)
+            if not has_drosophila:
+                print(f"    ❌ Dropped (no Drosophila): {paper.get('title', '')[:60]}")
+                continue
+
+            # Soft score: how many topic keywords appear
+            topic_score = sum(1 for kw in topic_keywords if kw in combined)
+            gene_score = sum(2 for g in gene_keywords if g in combined)  # genes weighted higher
+            total_score = topic_score + gene_score
+
+            paper['_relevance_score'] = total_score
+            filtered.append(paper)
+
+        # Sort by relevance score descending
+        filtered.sort(key=lambda p: p.get('_relevance_score', 0), reverse=True)
+
+        dropped = len(papers) - len(filtered)
+        if dropped > 0:
+            print(f"  🔍 Relevance filter: kept {len(filtered)}/{len(papers)} papers ({dropped} dropped)")
+
+        return filtered
+
     def search_pubmed(self, query, max_results=5):
         try:
             full_query = f"Drosophila AND ({query})"
@@ -475,8 +541,11 @@ class DrosophilaAssistant:
         review_papers = self.search_pubmed("Drosophila aging review mechanisms longevity", max_results=3)
         add_papers(review_papers)
 
-        print(f"  ✅ Total unique papers for proposal: {len(all_papers)}")
-        return all_papers[:15]  # cap at 15 to avoid token overflow
+        # Filter for relevance before returning — drop non-Drosophila and off-topic papers
+        filtered = self.filter_relevant_papers(all_papers, topic, genes, user_clarifications)
+
+        print(f"  ✅ Papers after relevance filter: {len(filtered)}/{len(all_papers)}")
+        return filtered[:15]  # cap at 15 to avoid token overflow
 
     def handle_planning_request(self, user_message: str, force: bool = False) -> Dict:
         """
@@ -559,8 +628,8 @@ class DrosophilaAssistant:
                 }
 
             print(f"  ✅ Generating proposal with {len(proposal_papers)} papers...")
-            # Update the planner context with the enriched paper set
-            self.planner.set_context_from_chat(proposal_topic, proposal_genes, proposal_papers)
+            # Update the planner context with the enriched paper set + clarifications
+            self.planner.set_context_from_chat(proposal_topic, proposal_genes, proposal_papers, clarifications=user_message)
 
             proposal = self.planner.generate_proposal(
                 topic=proposal_topic,
@@ -656,6 +725,10 @@ class DrosophilaAssistant:
             pubmed_papers = self.search_pubmed(user_message, max_results=num_needed - len(all_papers))
             if pubmed_papers:
                 all_papers.extend(pubmed_papers)
+
+        # Filter chat papers for relevance too
+        if all_papers:
+            all_papers = self.filter_relevant_papers(all_papers, user_message, genes)
 
         # Cache for planner
         if all_papers:

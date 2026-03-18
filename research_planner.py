@@ -57,12 +57,13 @@ class ResearchPlanner:
         self.current_proposal: Optional[Dict] = None
         self.proposal_context: Dict = {}  # topic, genes, papers from prior chat
 
-    def set_context_from_chat(self, topic: str, genes: List[str], papers: List[Dict]):
+    def set_context_from_chat(self, topic: str, genes: List[str], papers: List[Dict], clarifications: str = ""):
         """Called by the assistant to seed the planner with chat context."""
         self.proposal_context = {
             'topic': topic,
             'genes': genes,
-            'papers': papers
+            'papers': papers,
+            'clarifications': clarifications
         }
 
     def extract_topic_from_message(self, message: str) -> str:
@@ -202,20 +203,32 @@ Return ONLY valid JSON with this exact structure:
 }}"""
 
         context_quality = "STRONG" if has_strong_literature else "LIMITED"
+        # Build a strict topic anchor to prevent drift
+        topic_anchor = f"""STRICT TOPIC ANCHOR — DO NOT DEVIATE:
+The researcher explicitly asked about: "{topic}"
+Researcher clarifications: "{user_clarifications if user_clarifications else 'none provided'}"
+Genes mentioned by researcher: {gene_str}
+
+CRITICAL: The proposal MUST be about the topic and genes stated above.
+Do NOT invent new genes, pathways, or research directions not mentioned by the researcher or present in the provided literature.
+If the literature pulls in tangential topics, ignore them — stay focused on what the researcher asked for.
+If you do not have enough specific literature on the exact topic, say so explicitly in the background rather than pivoting to a related topic you know more about."""
+
         user_prompt = f"""Create a research proposal for the following:
 
-Topic: {topic}
-Key genes/proteins: {gene_str}{clarification_str}
+{topic_anchor}
+
 Literature context quality: {context_quality} ({len(papers)} papers retrieved)
 {paper_context}
 {chat_context}
 
 REQUIREMENTS:
-- Generate 2-3 specific aims with concrete experimental approaches
-- If literature context is LIMITED, be honest and specific about what is unknown rather than padding with generic pathway descriptions
+- Generate 2-3 specific aims directly addressing the stated topic
+- Stay anchored to the researcher's stated topic — do not drift to related but different questions
+- If literature context is LIMITED for the exact topic, be honest rather than padding or pivoting
 - Every experimental approach must name specific strains, drivers, or assay parameters
 - The hypothesis must include a predicted measurable outcome
-- Flag real literature gaps — do not write around them with textbook knowledge"""
+- Flag real literature gaps — do not write around them with invented research directions"""
 
 
         response = self.client.messages.create(
