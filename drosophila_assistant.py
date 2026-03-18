@@ -590,16 +590,25 @@ class DrosophilaAssistant:
                 'ready_for_export': True
             }
 
-        # Extract topic
-        topic = self.planner.extract_topic_from_message(user_message)
-        if not topic and self.last_topic:
+        # Extract topic — prefer last_topic if the message is a planning trigger phrase
+        # rather than a real topic description (e.g. "plan research", "build a proposal")
+        extracted_topic = self.planner.extract_topic_from_message(user_message)
+        if len(extracted_topic.split()) <= 2 and self.last_topic:
+            # Extracted topic is too short — likely a planning trigger phrase, use last_topic
             topic = self.last_topic
+            print(f"  📌 Using cached topic: {topic[:60]}")
+        else:
+            topic = extracted_topic or self.last_topic or user_message[:100]
 
         genes = self.extract_gene_names(user_message)
         if not genes and self.last_genes:
             genes = self.last_genes
 
         papers = self.last_papers if self.last_papers else []
+
+        # Fix 2: Preserve prior clarification answers across the thin-literature block
+        # If we already have stored clarifications from a previous attempt, carry them forward
+        stored_clarifications = self.planner.proposal_context.get('clarifications', '')
 
         # If we're awaiting clarification, use this message as the clarification and generate
         if self.awaiting_clarification:
@@ -626,18 +635,24 @@ class DrosophilaAssistant:
 
             MIN_PAPERS = 4
             if len(proposal_papers) < MIN_PAPERS:
-                # Not enough literature — warn user instead of generating a thin proposal
+                # Not enough literature — warn user but SAVE their clarifications
+                # so they don't have to answer questions again after chatting more
                 found = len(proposal_papers)
+                self.planner.set_context_from_chat(
+                    proposal_topic, proposal_genes, proposal_papers,
+                    clarifications=user_message  # store their answers
+                )
                 return {
                     'type': 'clarification',
                     'content': (
                         f"⚠️ **Literature too thin to generate a strong proposal.**\n\n"
                         f"I searched PubMed and FlyBase but only found **{found} paper(s)** "
-                        f"relevant to *{proposal_topic}*. A well-cited proposal needs at least {MIN_PAPERS}.\n\n"
+                        f"on *{proposal_topic}*. A well-cited proposal needs at least {MIN_PAPERS}.\n\n"
+                        f"**Your answers have been saved** — you won't need to answer the questions again.\n\n"
                         f"A few options:\n"
-                        f"- **Chat with me first** about your topic (e.g. *'What is known about FOXO in fat body aging?'*) "
-                        f"to pull more papers, then click Plan Research\n"
-                        f"- **Share specific papers** you already know — paste a PMID or title and I'll incorporate them\n"
+                        f"- **Chat with me first** (e.g. *'What is known about FOXO in fat body aging?'*) "
+                        f"to pull more papers, then click **Plan Research** again\n"
+                        f"- **Share specific papers** you know — paste a PMID or title\n"
                         f"- **Broaden your topic** slightly if it's very niche\n\n"
                         f"What would you like to do?"
                     ),
@@ -664,10 +679,54 @@ class DrosophilaAssistant:
                 'ready_for_export': True
             }
 
-        # Always ask clarifying questions on first proposal generation.
-        # Only skip if we already asked and are now receiving the answer (awaiting_clarification).
-        # Having genes + papers is not sufficient — we need researcher-specific context
-        # to avoid generic proposals.
+        # If we already have stored clarifications from a previous attempt
+        # (e.g. user answered questions, hit thin-literature block, then chatted more)
+        # skip asking again and go straight to generation with the stored answers
+        if stored_clarifications and len(stored_clarifications.split()) > 3:
+            print(f"  ♻️  Reusing stored clarifications: {stored_clarifications[:60]}...")
+            self.planner.set_context_from_chat(topic, genes, papers, clarifications=stored_clarifications)
+            proposal_papers = self.fetch_literature_for_proposal(
+                topic=topic,
+                genes=genes,
+                user_clarifications=stored_clarifications
+            )
+            cached = papers
+            seen = {p.get('pmid') for p in proposal_papers if p.get('pmid')}
+            for p in cached:
+                if p.get('pmid') not in seen:
+                    proposal_papers.append(p)
+                    seen.add(p.get('pmid'))
+
+            MIN_PAPERS = 4
+            if len(proposal_papers) < MIN_PAPERS:
+                return {
+                    'type': 'clarification',
+                    'content': (
+                        f"⚠️ **Still finding limited literature** ({len(proposal_papers)} papers found).\n\n"
+                        f"Try asking me a more specific question about your topic first, "
+                        f"then click Plan Research again."
+                    ),
+                    'proposal': None,
+                    'ready_for_export': False
+                }
+
+            self.planner.set_context_from_chat(topic, genes, proposal_papers, clarifications=stored_clarifications)
+            proposal = self.planner.generate_proposal(
+                topic=topic,
+                genes=genes,
+                papers=proposal_papers,
+                user_clarifications=stored_clarifications,
+                conversation_history=self.conversation_history
+            )
+            formatted = self.planner.format_proposal_for_chat(proposal)
+            return {
+                'type': 'proposal',
+                'content': formatted,
+                'proposal': proposal,
+                'ready_for_export': True
+            }
+
+        # No prior clarifications — ask questions for the first time
         print("  ❓ Asking clarifying questions for better specificity...")
         question = self.planner.generate_clarifying_questions(topic, genes)
         self.planner.set_context_from_chat(topic, genes, papers)
