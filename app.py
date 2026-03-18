@@ -539,6 +539,294 @@ def design_experiment():
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
+
+@app.route('/api/export_experiment_design', methods=['POST'])
+def export_experiment_design():
+    """Export a single experiment design aim as .docx"""
+    try:
+        data = request.get_json()
+        session_id = data.get('session_id', 'default')
+        design = data.get('design', None)  # full design JSON from client
+
+        if not design:
+            return jsonify({'error': 'No experiment design provided.'}), 400
+
+        import subprocess, base64
+
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        output_path = f"/tmp/experiment_design_{timestamp}.docx"
+        design_json = json.dumps(design)
+
+        node_script = f"""
+const {{ Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType,
+        LevelFormat, ExternalHyperlink, BorderStyle }} = require('docx');
+const fs = require('fs');
+
+const design = {design_json};
+const BLUE = "2E5FA3";
+const DARK = "1A1A2E";
+const GRAY = "555555";
+const GREEN = "166534";
+
+function h1(text) {{
+  return new Paragraph({{
+    heading: HeadingLevel.HEADING_1,
+    spacing: {{ before: 360, after: 120 }},
+    border: {{ bottom: {{ style: BorderStyle.SINGLE, size: 6, color: BLUE, space: 4 }} }},
+    children: [new TextRun({{ text, bold: true, color: BLUE, size: 28, font: "Arial" }})]
+  }});
+}}
+
+function h2(text) {{
+  return new Paragraph({{
+    heading: HeadingLevel.HEADING_2,
+    spacing: {{ before: 240, after: 80 }},
+    children: [new TextRun({{ text, bold: true, color: DARK, size: 24, font: "Arial" }})]
+  }});
+}}
+
+function body(text, color) {{
+  return new Paragraph({{
+    spacing: {{ before: 60, after: 80 }},
+    children: [new TextRun({{ text: text || '', size: 22, font: "Arial", color: color || GRAY }})]
+  }});
+}}
+
+function kv(label, value) {{
+  return new Paragraph({{
+    spacing: {{ before: 40, after: 40 }},
+    children: [
+      new TextRun({{ text: label + ': ', bold: true, size: 22, font: "Arial", color: DARK }}),
+      new TextRun({{ text: value || '', size: 22, font: "Arial", color: GRAY }})
+    ]
+  }});
+}}
+
+function bullet(text) {{
+  return new Paragraph({{
+    numbering: {{ reference: "bullets", level: 0 }},
+    spacing: {{ before: 40, after: 40 }},
+    children: [new TextRun({{ text: text || '', size: 22, font: "Arial", color: GRAY }})]
+  }});
+}}
+
+function spacer() {{
+  return new Paragraph({{ spacing: {{ before: 80, after: 80 }}, children: [new TextRun('')] }});
+}}
+
+const children = [];
+
+// Title
+children.push(new Paragraph({{
+  alignment: AlignmentType.CENTER,
+  spacing: {{ before: 480, after: 120 }},
+  children: [new TextRun({{ text: `Aim ${{design.aim_number}}: ${{design.aim_title}}`, bold: true, size: 36, font: "Arial", color: DARK }})]
+}}));
+children.push(new Paragraph({{
+  alignment: AlignmentType.CENTER,
+  spacing: {{ before: 0, after: 120 }},
+  children: [new TextRun({{ text: 'Experiment Design Protocol', size: 24, font: "Arial", color: BLUE }})]
+}}));
+if (design.estimated_duration) {{
+  children.push(new Paragraph({{
+    alignment: AlignmentType.CENTER,
+    spacing: {{ before: 0, after: 480 }},
+    children: [new TextRun({{ text: '⏱ ' + design.estimated_duration, size: 22, font: "Arial", color: GRAY }})]
+  }}));
+}}
+
+// Cross Scheme
+const cs = design.cross_scheme || {{}};
+if (cs.overview) {{
+  children.push(h1('🧬 Cross Scheme'));
+  children.push(body(cs.overview));
+  if (cs.parental_genotypes?.length) {{
+    children.push(h2('Parental Lines'));
+    cs.parental_genotypes.forEach(p => {{
+      children.push(new Paragraph({{
+        spacing: {{ before: 60, after: 20 }},
+        children: [
+          new TextRun({{ text: p.line + ': ', bold: true, size: 22, font: "Arial", color: DARK }}),
+          new TextRun({{ text: p.genotype + ' — ' + (p.source || ''), size: 22, font: "Arial", color: GRAY }})
+        ]
+      }}));
+      if (p.notes) children.push(body('  ' + p.notes, BLUE));
+    }});
+  }}
+  if (cs.generations?.length) {{
+    children.push(h2('Crossing Generations'));
+    cs.generations.forEach(g => {{
+      children.push(new Paragraph({{
+        spacing: {{ before: 80, after: 20 }},
+        children: [new TextRun({{ text: g.generation + ': ' + g.cross, bold: true, size: 22, font: "Arial", color: DARK }})]
+      }}));
+      if (g.instructions) children.push(body(g.instructions));
+      if (g.timing) children.push(body('⏱ ' + g.timing, BLUE));
+    }});
+  }}
+  if (cs.expected_progeny) {{ children.push(h2('Expected Progeny')); children.push(body(cs.expected_progeny)); }}
+  if (cs.balancer_notes) {{ children.push(h2('Balancer Notes')); children.push(body(cs.balancer_notes)); }}
+  children.push(spacer());
+}}
+
+// Vial Setup
+const vs = design.vial_setup || {{}};
+const vsEntries = Object.entries({{
+  'Vial Type': vs.vial_type, 'Fly Density': vs.fly_density, 'Food': vs.food,
+  'Temperature': vs.temperature, 'Light Cycle': vs.light_cycle, 'Humidity': vs.humidity,
+  'Flipping Schedule': vs.flipping_schedule, 'Special Conditions': vs.special_conditions
+}}).filter(([k,v]) => v);
+if (vsEntries.length) {{
+  children.push(h1('🫙 Vial Setup & Husbandry'));
+  vsEntries.forEach(([k,v]) => children.push(kv(k, v)));
+  children.push(spacer());
+}}
+
+// Timepoints
+const tps = design.timepoints || [];
+if (tps.length) {{
+  children.push(h1('📅 Timepoints & Schedule'));
+  tps.forEach(tp => {{
+    children.push(new Paragraph({{
+      spacing: {{ before: 80, after: 20 }},
+      children: [new TextRun({{ text: 'Day ' + tp.day + ': ' + tp.action, bold: true, size: 22, font: "Arial", color: DARK }})]
+    }}));
+    if (tp.what_to_collect) children.push(body('📋 ' + tp.what_to_collect, BLUE));
+    if (tp.notes) children.push(body(tp.notes));
+  }});
+  children.push(spacer());
+}}
+
+// Data Collection Sheet
+const dcs = design.data_collection_sheet || {{}};
+if (dcs.columns?.length) {{
+  children.push(h1('📊 Data Collection Sheet'));
+  if (dcs.description) children.push(body(dcs.description));
+  children.push(body('Columns: ' + dcs.columns.join(' | ')));
+  if (dcs.scoring_criteria) children.push(body('Scoring: ' + dcs.scoring_criteria, BLUE));
+  children.push(spacer());
+}}
+
+// Statistical Analysis
+const sa = design.statistical_analysis || {{}};
+if (sa.primary_test) {{
+  children.push(h1('📈 Statistical Analysis'));
+  if (sa.primary_test) children.push(kv('Primary Test', sa.primary_test));
+  if (sa.software) children.push(kv('Software', sa.software));
+  if (sa.sample_size_justification) children.push(kv('Sample Size', sa.sample_size_justification));
+  if (sa.censoring_criteria) children.push(kv('Censoring Criteria', sa.censoring_criteria));
+  if (sa.multiple_comparisons) children.push(kv('Multiple Comparisons', sa.multiple_comparisons));
+  children.push(spacer());
+}}
+
+// Go/No-Go
+const gng = design.go_no_go_criteria || [];
+if (gng.length) {{
+  children.push(h1('🚦 Go/No-Go Criteria'));
+  gng.forEach(g => {{
+    children.push(new Paragraph({{
+      spacing: {{ before: 80, after: 20 }},
+      children: [new TextRun({{ text: g.checkpoint + ' (Check: ' + g.timing + ')', bold: true, size: 22, font: "Arial", color: DARK }})]
+    }}));
+    children.push(body('✅ Go if: ' + g.threshold, GREEN));
+    children.push(body('⚠️ If fail: ' + g.if_fail, "92400E"));
+  }});
+  children.push(spacer());
+}}
+
+// Troubleshooting
+const ts = design.troubleshooting || [];
+if (ts.length) {{
+  children.push(h1('🔧 Troubleshooting'));
+  ts.forEach(t => {{
+    children.push(new Paragraph({{
+      spacing: {{ before: 80, after: 20 }},
+      children: [new TextRun({{ text: 'Problem: ' + t.problem, bold: true, size: 22, font: "Arial", color: DARK }})]
+    }}));
+    children.push(body('Cause: ' + t.likely_cause));
+    children.push(body('Solution: ' + t.solution, BLUE));
+  }});
+  children.push(spacer());
+}}
+
+// Materials
+const mats = design.materials_needed || [];
+if (mats.length) {{
+  children.push(h1('🧪 Materials Needed'));
+  mats.forEach(m => children.push(bullet(m)));
+}}
+
+const doc = new Document({{
+  numbering: {{
+    config: [{{ reference: "bullets",
+      levels: [{{ level: 0, format: LevelFormat.BULLET, text: "•",
+        alignment: AlignmentType.LEFT,
+        style: {{ paragraph: {{ indent: {{ left: 720, hanging: 360 }} }} }} }}] }}]
+  }},
+  styles: {{
+    default: {{ document: {{ run: {{ font: "Arial", size: 22 }} }} }},
+    paragraphStyles: [
+      {{ id: "Heading1", name: "Heading 1", basedOn: "Normal", next: "Normal", quickFormat: true,
+        run: {{ size: 28, bold: true, font: "Arial", color: BLUE }},
+        paragraph: {{ spacing: {{ before: 360, after: 120 }}, outlineLevel: 0 }} }},
+      {{ id: "Heading2", name: "Heading 2", basedOn: "Normal", next: "Normal", quickFormat: true,
+        run: {{ size: 24, bold: true, font: "Arial", color: DARK }},
+        paragraph: {{ spacing: {{ before: 240, after: 80 }}, outlineLevel: 1 }} }},
+    ]
+  }},
+  sections: [{{
+    properties: {{
+      page: {{
+        size: {{ width: 12240, height: 15840 }},
+        margin: {{ top: 1440, right: 1440, bottom: 1440, left: 1440 }}
+      }}
+    }},
+    children
+  }}]
+}});
+
+Packer.toBuffer(doc).then(buf => {{
+  fs.writeFileSync('{output_path}', buf);
+  console.log('SUCCESS');
+}}).catch(err => {{
+  console.error('ERROR:' + err.message);
+  process.exit(1);
+}});
+"""
+
+        # Ensure docx npm package available
+        node_modules_path = "/tmp/node_modules"
+        if not os.path.exists(os.path.join(node_modules_path, "docx")):
+            subprocess.run(['npm', 'install', '--prefix', '/tmp', 'docx'],
+                         capture_output=True, text=True, timeout=60)
+
+        script_path = f"/tmp/gen_design_{timestamp}.js"
+        with open(script_path, 'w') as f:
+            f.write(node_script)
+
+        env = os.environ.copy()
+        env['NODE_PATH'] = node_modules_path
+        result = subprocess.run(['node', script_path], capture_output=True, text=True, timeout=30, env=env)
+        os.unlink(script_path)
+
+        if result.returncode != 0 or not os.path.exists(output_path):
+            return jsonify({'error': f'Failed to generate .docx: {result.stderr}'}), 500
+
+        with open(output_path, 'rb') as f:
+            docx_bytes = f.read()
+        os.unlink(output_path)
+
+        encoded = base64.b64encode(docx_bytes).decode('utf-8')
+        aim_num = design.get('aim_number', 1)
+        filename = f"aim{aim_num}_experiment_design_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx"
+
+        return jsonify({'docx_base64': encoded, 'filename': filename, 'status': 'success'})
+
+    except Exception as e:
+        print(f"Export design error: {str(e)}")
+        import traceback; traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/health', methods=['GET'])
 def health():
     return jsonify({

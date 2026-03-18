@@ -664,6 +664,12 @@
                         disabled>
                     📥 Export .docx
                 </button>
+                <button class="btn-export-docx" id="exportDesignBtn"
+                        onclick="exportDesignDocx()"
+                        style="width:auto; padding: 7px 14px; font-size: 13px; display:none; background: linear-gradient(135deg,#166534,#14532d);"
+                        >
+                    📥 Export Aim
+                </button>
                 <button class="btn-panel-close" onclick="closeProposalPanel()" title="Close">×</button>
             </div>
         </div>
@@ -921,11 +927,17 @@
         ).join('');
     }
 
+    let currentDesignData = null;  // stores last generated experiment design JSON
+
     async function designExperiment(aimNumber) {
         // Update UI
         document.querySelectorAll('.btn-aim').forEach(b => b.classList.remove('active'));
         const btn = document.getElementById(`aimBtn${aimNumber}`);
         if (btn) btn.classList.add('active');
+
+        // Show aim export button, hide proposal export
+        document.getElementById('exportDesignBtn').style.display = 'inline-flex';
+        document.getElementById('exportDocxBtn').style.display = 'none';
 
         document.getElementById('panelTitle').textContent = `🧪 Experiment Design`;
         const body = document.getElementById('proposalBody');
@@ -955,6 +967,7 @@
             }
 
             currentDesignAim = aimNumber;
+            currentDesignData = data.design;  // cache for export
             body.innerHTML = formatDesignForPanel(data.design, data.formatted);
 
         } catch (err) {
@@ -964,8 +977,12 @@
 
     function backToProposal() {
         currentDesignAim = null;
+        currentDesignData = null;
         document.querySelectorAll('.btn-aim').forEach(b => b.classList.remove('active'));
         document.getElementById('panelTitle').textContent = '📄 Research Proposal';
+        // Restore proposal export button
+        document.getElementById('exportDesignBtn').style.display = 'none';
+        document.getElementById('exportDocxBtn').style.display = 'inline-flex';
         const body = document.getElementById('proposalBody');
         body.innerHTML = formatForPanel(currentProposalMarkdown);
     }
@@ -1250,6 +1267,52 @@
     function removeTypingIndicator(id) {
         const el = document.getElementById(id);
         if (el) el.remove();
+    }
+
+    // ── Export experiment design as .docx ───────────────────────────────────
+    async function exportDesignDocx() {
+        if (!currentDesignData) {
+            alert('No experiment design to export. Generate a design first.');
+            return;
+        }
+
+        const btn = document.getElementById('exportDesignBtn');
+        btn.disabled = true;
+        btn.textContent = '⏳ Generating...';
+
+        try {
+            const res = await fetch('/api/export_experiment_design', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    session_id: sessionId,
+                    design: currentDesignData
+                })
+            });
+            const data = await res.json();
+
+            if (data.error) {
+                alert('Export failed: ' + data.error);
+                return;
+            }
+
+            const binary = atob(data.docx_base64);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+            const blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = data.filename || `aim_design.docx`;
+            a.click();
+            URL.revokeObjectURL(url);
+
+        } catch (err) {
+            alert('Export error: ' + err.message);
+        } finally {
+            btn.disabled = false;
+            btn.textContent = '📥 Export Aim';
+        }
     }
 
     // ── Export proposal as .docx ─────────────────────────────────────────────
