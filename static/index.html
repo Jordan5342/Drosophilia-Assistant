@@ -670,6 +670,12 @@
                         >
                     📥 Export Aim
                 </button>
+                <button id="printDesignBtn"
+                        onclick="printDesign()"
+                        style="width:auto; padding: 7px 12px; font-size: 13px; display:none; background:white; border:1px solid #ccc; border-radius:6px; cursor:pointer; color:#444;"
+                        >
+                    🖨️ Print
+                </button>
                 <button class="btn-panel-close" onclick="closeProposalPanel()" title="Close">×</button>
             </div>
         </div>
@@ -879,8 +885,11 @@
 
     // ── Enable/disable export buttons ───────────────────────────────────────
     function enableExportBtn(enabled) {
-        document.getElementById('exportDocxBtn').disabled = !enabled;
         document.getElementById('exportDocxBtnFooter').disabled = !enabled;
+        // Only enable header export btn if we're in proposal view (not design view)
+        if (!currentDesignAim) {
+            document.getElementById('exportDocxBtn').disabled = !enabled;
+        }
     }
 
     // ── Proposal panel ───────────────────────────────────────────────────────
@@ -935,8 +944,9 @@
         const btn = document.getElementById(`aimBtn${aimNumber}`);
         if (btn) btn.classList.add('active');
 
-        // Show aim export button, hide proposal export
+        // Show aim export + print buttons, hide proposal export
         document.getElementById('exportDesignBtn').style.display = 'inline-flex';
+        document.getElementById('printDesignBtn').style.display = 'inline-flex';
         document.getElementById('exportDocxBtn').style.display = 'none';
 
         document.getElementById('panelTitle').textContent = `🧪 Experiment Design`;
@@ -982,6 +992,7 @@
         document.getElementById('panelTitle').textContent = '📄 Research Proposal';
         // Restore proposal export button
         document.getElementById('exportDesignBtn').style.display = 'none';
+        document.getElementById('printDesignBtn').style.display = 'none';
         document.getElementById('exportDocxBtn').style.display = 'inline-flex';
         const body = document.getElementById('proposalBody');
         body.innerHTML = formatForPanel(currentProposalMarkdown);
@@ -1267,6 +1278,33 @@
     function removeTypingIndicator(id) {
         const el = document.getElementById(id);
         if (el) el.remove();
+    }
+
+    // ── Print experiment design ──────────────────────────────────────────────
+    function printDesign() {
+        const panelBody = document.getElementById('proposalBody').innerHTML;
+        const win = window.open('', '_blank');
+        win.document.write(`
+            <!DOCTYPE html><html><head>
+            <title>Experiment Design - Aim ${currentDesignAim}</title>
+            <style>
+                body { font-family: Arial, sans-serif; font-size: 13px; color: #222; padding: 24px; max-width: 800px; margin: 0 auto; }
+                h2 { color: #2E5FA3; border-bottom: 2px solid #2E5FA3; padding-bottom: 4px; margin-top: 24px; }
+                h3 { color: #1a3a6b; margin-top: 18px; }
+                table { width: 100%; border-collapse: collapse; margin: 8px 0; }
+                th { background: #EEF3FB; color: #1a3a6b; padding: 6px 8px; text-align: left; border: 1px solid #d0dff0; }
+                td { padding: 5px 8px; border: 1px solid #e5e7eb; }
+                li { margin: 3px 0; }
+                code { background: #f5f5f5; padding: 1px 4px; border-radius: 3px; }
+                .checkpoint-block { background: #f8faff; border-left: 3px solid #2E5FA3; padding: 8px 12px; margin: 6px 0; }
+                @media print { button { display: none; } }
+            </style>
+            </head><body>
+            ${panelBody}
+            <script>window.onload = function() { window.print(); }<\/script>
+            </body></html>
+        `);
+        win.document.close();
     }
 
     // ── Export experiment design as .docx ───────────────────────────────────
