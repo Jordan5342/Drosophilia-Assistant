@@ -314,69 +314,87 @@ class DrosophilaAssistant:
 
     def filter_relevant_papers(self, papers: List[Dict], topic: str, genes: List[str], user_clarifications: str = "") -> List[Dict]:
         """
-        Filter papers for relevance before passing to the planner.
-        Drops papers that don't mention Drosophila or the core topic.
-        Two-pass: hard filter (must mention Drosophila), then soft score.
+        Filter and rank papers for relevance using:
+        1. Hard filter: must mention Drosophila (drops off-organism papers)
+        2. TF-IDF cosine similarity: ranks remaining papers by semantic
+           similarity to the researcher's query — discriminates by rare
+           meaningful terms rather than raw keyword counts.
         """
         if not papers:
             return []
 
-        combined_context = f"{topic} {user_clarifications}".lower()
+        from sklearn.feature_extraction.text import TfidfVectorizer
+        from sklearn.metrics.pairwise import cosine_similarity
+        import numpy as np
 
-        # Build keyword sets
         drosophila_terms = {'drosophila', 'melanogaster', 'fruit fly', 'flies', 'drosophilid'}
 
-        # Topic keywords extracted from context
-        topic_keywords = set()
-        keyword_map = {
-            'aging': ['aging', 'ageing', 'lifespan', 'longevity', 'senescence', 'gerontology'],
-            'autophagy': ['autophagy', 'atg', 'lysosome', 'autophagosome'],
-            'intestin': ['intestin', 'gut', 'midgut', 'epithelium', 'stem cell'],
-            'foxo': ['foxo', 'forkhead', 'transcription factor'],
-            'insulin': ['insulin', 'igf', 'inr', 'dilp', 'irs'],
-            'tor': ['tor', 'rapamycin', 'mtor', 's6k'],
-            'locomotor': ['locomotor', 'climbing', 'motor', 'movement'],
-            'sleep': ['sleep', 'circadian', 'rhythm'],
-            'neuron': ['neuron', 'neural', 'brain', 'cognitive'],
-            'fat body': ['fat body', 'adipose', 'lipid'],
-            'muscle': ['muscle', 'sarcopenia', 'myopathy'],
-            'stress': ['oxidative stress', 'ros', 'paraquat', 'hydrogen peroxide'],
-        }
-
-        for key, terms in keyword_map.items():
-            if any(k in combined_context for k in [key] + terms[:2]):
-                topic_keywords.update(terms)
-
-        gene_keywords = {g.lower() for g in genes}
-
-        filtered = []
+        # Hard filter: must mention Drosophila
+        drosophila_papers = []
         for paper in papers:
             title = (paper.get('title', '') or '').lower()
             abstract = (paper.get('abstract', '') or '').lower()
             combined = title + ' ' + abstract
-
-            # Hard filter: must mention Drosophila or fly model
-            has_drosophila = any(term in combined for term in drosophila_terms)
-            if not has_drosophila:
+            if any(term in combined for term in drosophila_terms):
+                drosophila_papers.append(paper)
+            else:
                 print(f"    ❌ Dropped (no Drosophila): {paper.get('title', '')[:60]}")
-                continue
 
-            # Soft score: how many topic keywords appear
-            topic_score = sum(1 for kw in topic_keywords if kw in combined)
-            gene_score = sum(2 for g in gene_keywords if g in combined)  # genes weighted higher
-            total_score = topic_score + gene_score
+        if not drosophila_papers:
+            return []
 
-            paper['_relevance_score'] = total_score
-            filtered.append(paper)
+        # Build query from topic + clarifications + gene names
+        # Weight genes more heavily by repeating them
+        gene_str = ' '.join(genes) * 3  # repeat genes for emphasis
+        query = f"{topic} {user_clarifications} {gene_str}".strip()
 
-        # Sort by relevance score descending
-        filtered.sort(key=lambda p: p.get('_relevance_score', 0), reverse=True)
+        # Build corpus: query + all paper texts
+        paper_texts = []
+        for p in drosophila_papers:
+            title = p.get('title', '') or ''
+            abstract = p.get('abstract', '') or ''
+            paper_texts.append(f"{title} {abstract}")
 
-        dropped = len(papers) - len(filtered)
-        if dropped > 0:
-            print(f"  🔍 Relevance filter: kept {len(filtered)}/{len(papers)} papers ({dropped} dropped)")
+        corpus = [query] + paper_texts
 
-        return filtered
+        # TF-IDF vectorize — use sublinear_tf to reduce dominance of
+        # very frequent terms, min_df=1 since corpus is small
+        try:
+            vectorizer = TfidfVectorizer(
+                sublinear_tf=True,
+                min_df=1,
+                stop_words='english',
+                ngram_range=(1, 2)  # unigrams + bigrams catch "stem cell", "fat body" etc
+            )
+            tfidf_matrix = vectorizer.fit_transform(corpus)
+
+            # Query is index 0, papers are 1..n
+            query_vec = tfidf_matrix[0]
+            paper_vecs = tfidf_matrix[1:]
+
+            similarities = cosine_similarity(query_vec, paper_vecs)[0]
+
+            # Attach scores and sort
+            for i, paper in enumerate(drosophila_papers):
+                paper['_relevance_score'] = float(similarities[i])
+
+            drosophila_papers.sort(key=lambda p: p.get('_relevance_score', 0), reverse=True)
+
+            # Apply minimum similarity threshold — drop papers with near-zero similarity
+            MIN_SIMILARITY = 0.05
+            before = len(drosophila_papers)
+            drosophila_papers = [p for p in drosophila_papers if p.get('_relevance_score', 0) >= MIN_SIMILARITY]
+            below_threshold = before - len(drosophila_papers)
+            if below_threshold > 0:
+                print(f"    ❌ Dropped (low TF-IDF similarity): {below_threshold} papers")
+
+        except Exception as e:
+            print(f"    ⚠️  TF-IDF scoring failed ({e}), using unranked Drosophila papers")
+
+        dropped_total = len(papers) - len(drosophila_papers)
+        print(f"  🔍 Relevance filter: kept {len(drosophila_papers)}/{len(papers)} papers ({dropped_total} dropped)")
+
+        return drosophila_papers
 
     def search_pubmed(self, query, max_results=5):
         try:
