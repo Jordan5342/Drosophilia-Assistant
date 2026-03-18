@@ -761,6 +761,7 @@ class DrosophilaAssistant:
             and len(user_message.split()) < 80  # reasonably short answer
             and not user_message.strip().startswith('?')  # doesn't start as a question
         )
+        print(f"  🔍 Routing: awaiting={self.awaiting_clarification}, is_planning={is_planning}, force={force_planning}, is_clarification_answer={is_clarification_answer}, words={len(user_message.split())}")
 
         if force_planning or is_planning or is_clarification_answer:
             self.planning_mode = True

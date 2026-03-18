@@ -51,6 +51,7 @@ def chat():
         session_assistant = get_session(session_id)
 
         # Restore client-side planning state if server session was reset (e.g. after restart)
+        print(f"  🔍 State: client_awaiting={client_awaiting}, server_awaiting={session_assistant.awaiting_clarification}, force={force_planning}")
         if client_awaiting and not session_assistant.awaiting_clarification:
             print(f"  ♻️  Restoring awaiting_clarification from client state")
             session_assistant.awaiting_clarification = True
