@@ -93,12 +93,34 @@ class ResearchPlanner:
             'clarifications': clarifications
         }
 
+    # Scope/admin words that should never be treated as biological topics
+    SCOPE_WORDS = [
+        'rotation', 'rotational', 'rotate', 'rotating',
+        'thesis', 'dissertation', 'chapter',
+        'grant', 'application', 'proposal',
+        'project', 'study', 'research',
+        'rotation project', 'thesis chapter', 'grant application',
+        'short project', 'lab rotation',
+        'all capabilities', 'all tools', 'all techniques',
+        'access to all', 'full access', 'full capabilities',
+    ]
+
+    def strip_scope_words(self, text: str) -> str:
+        """Remove scope/admin words that describe project type, not biology."""
+        clean = text.lower()
+        for word in self.SCOPE_WORDS:
+            clean = re.sub(r'\b' + re.escape(word) + r'\b', '', clean)
+        return clean.strip()
+
     def extract_topic_from_message(self, message: str) -> str:
         """Pull the core research topic out of the user's message."""
         # Strip planning keywords to get the topic
         clean = message.lower()
         for phrase in PLANNING_INTENT_STRONG + PLANNING_INTENT_CONTEXTUAL:
             clean = clean.replace(phrase, '')
+
+        # Remove scope/admin words first
+        clean = self.strip_scope_words(clean)
 
         # Remove filler words
         fillers = ['for', 'about', 'on', 'regarding', 'around', 'this', 'the', 'a', 'an', 'me', 'please', 'can you', 'could you', 'i want to', 'i would like to']

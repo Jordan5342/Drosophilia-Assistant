@@ -518,7 +518,9 @@ class DrosophilaAssistant:
         topic_queries = []
 
         # Extract key biological terms from topic + clarifications
-        combined = f"{topic} {user_clarifications}".lower()
+        # Strip scope words before keyword matching to avoid false topic detection
+        clean_clarifs = self.planner.strip_scope_words(user_clarifications) if user_clarifications else ""
+        combined = f"{topic} {clean_clarifs}".lower()
 
         if any(w in combined for w in ['lifespan', 'longevity', 'aging', 'ageing']):
             topic_queries.append("Drosophila lifespan extension insulin signaling FOXO")
@@ -660,14 +662,18 @@ class DrosophilaAssistant:
                 }
 
             print(f"  ✅ Generating proposal with {len(proposal_papers)} papers...")
+            # Strip scope/admin words from clarifications before using for topic/literature
+            clean_clarifications = self.planner.strip_scope_words(user_message)
+            print(f"  🧹 Cleaned clarifications: '{clean_clarifications[:80]}'")
+
             # Update the planner context with the enriched paper set + clarifications
-            self.planner.set_context_from_chat(proposal_topic, proposal_genes, proposal_papers, clarifications=user_message)
+            self.planner.set_context_from_chat(proposal_topic, proposal_genes, proposal_papers, clarifications=clean_clarifications)
 
             proposal = self.planner.generate_proposal(
                 topic=proposal_topic,
                 genes=proposal_genes,
                 papers=proposal_papers,
-                user_clarifications=user_message,
+                user_clarifications=clean_clarifications,
                 conversation_history=self.conversation_history
             )
             formatted = self.planner.format_proposal_for_chat(proposal)
@@ -681,6 +687,9 @@ class DrosophilaAssistant:
         # If we already have stored clarifications from a previous attempt
         # (e.g. user answered questions, hit thin-literature block, then chatted more)
         # skip asking again and go straight to generation with the stored answers
+        # Strip scope words from stored clarifications before reuse
+        if stored_clarifications:
+            stored_clarifications = self.planner.strip_scope_words(stored_clarifications)
         if stored_clarifications and len(stored_clarifications.split()) > 3:
             print(f"  ♻️  Reusing stored clarifications: {stored_clarifications[:60]}...")
             self.planner.set_context_from_chat(topic, genes, papers, clarifications=stored_clarifications)
