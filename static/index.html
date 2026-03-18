@@ -804,13 +804,22 @@
                     if (data.proposal_json) {
                         currentProposalData = data.proposal_json;
                     }
-                    // Auto-open proposal panel on first proposal
+                    // Extract clean proposal markdown — strip refinement summary prefix if present
+                    // Strip refinement prefix: summary text before \n\n---\n\n separator
+                    let proposalMarkdown = data.response;
+                    // Strip refinement summary prefix using regex (handles actual newlines in JSON)
+                    const _sepIdx = proposalMarkdown.indexOf('\n\n---\n\n');
+                    if (_sepIdx !== -1) { proposalMarkdown = proposalMarkdown.substring(_sepIdx + 7); }
+                    // Always re-render the panel with latest proposal
+                    // This handles both first generation and refinements
                     if (!proposalPanelOpen) {
                         openProposalPanel();
-                        renderProposalInPanel(data.response);
-                    } else {
-                        renderProposalInPanel(data.response);
                     }
+                    // Reset to proposal view (in case user was viewing an experiment design)
+                    currentDesignAim = null;
+                    document.querySelectorAll('.btn-aim').forEach(b => b.classList.remove('active'));
+                    document.getElementById('panelTitle').textContent = '📄 Research Proposal';
+                    renderProposalInPanel(proposalMarkdown);
                 }
             }
         } catch (err) {
@@ -1098,6 +1107,10 @@
         // Convert markdown to readable HTML for the proposal panel
         let html = text;
 
+        // Strip refinement summary prefix (everything before the --- separator)
+        const _sep = html.indexOf('\n\n---\n\n');
+        if (_sep !== -1) { html = html.substring(_sep + 7); }
+
         // Strip planning badge markdown if present
         html = html.replace(/🔬 \*\*Research Planner activated!\*\*/g, '');
 
@@ -1134,7 +1147,7 @@
         return html;
     }
 
-    // ── Add message to chat ─────────────────────────────────────────────────
+
     function addMessage(text, type, hasProposal = false) {
         const messages = document.getElementById('messages');
         const msg = document.createElement('div');
