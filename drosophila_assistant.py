@@ -329,13 +329,15 @@ class DrosophilaAssistant:
 
         drosophila_terms = {'drosophila', 'melanogaster', 'fruit fly', 'flies', 'drosophilid'}
 
-        # Hard filter: must mention Drosophila
+        # Hard filter: must mention Drosophila OR come from FlyBase
+        # FlyBase papers are already organism-specific by definition
         drosophila_papers = []
         for paper in papers:
             title = (paper.get('title', '') or '').lower()
             abstract = (paper.get('abstract', '') or '').lower()
             combined = title + ' ' + abstract
-            if any(term in combined for term in drosophila_terms):
+            from_flybase = paper.get('source', '').startswith('FlyBase')
+            if from_flybase or any(term in combined for term in drosophila_terms):
                 drosophila_papers.append(paper)
             else:
                 print(f"    ❌ Dropped (no Drosophila): {paper.get('title', '')[:60]}")

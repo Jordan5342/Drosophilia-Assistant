@@ -712,6 +712,7 @@
     let inPlanningMode = false;
     let proposalReady = false;
     let proposalPanelOpen = false;
+    let awaitingClarification = false;  // tracks whether server asked clarifying questions
 
     // ── Health check ─────────────────────────────────────────────────────────
     async function checkHealth() {
@@ -769,7 +770,8 @@
                 body: JSON.stringify({
                     message,
                     session_id: sessionId,
-                    force_planning: forcePlanning
+                    force_planning: forcePlanning,
+                    awaiting_clarification: awaitingClarification
                 })
             });
             const data = await res.json();
@@ -784,6 +786,15 @@
                 if (data.is_planning) {
                     inPlanningMode = true;
                     updatePlanningUI(true);
+                    // Track whether server is waiting for clarification answer
+                    if (!data.ready_for_export && !data.has_proposal) {
+                        awaitingClarification = true;
+                    } else {
+                        awaitingClarification = false;
+                    }
+                } else {
+                    // Non-planning response — clear clarification flag
+                    awaitingClarification = false;
                 }
 
                 if (data.ready_for_export && data.has_proposal) {
@@ -1279,6 +1290,7 @@
             inPlanningMode = false;
             proposalReady = false;
             proposalPanelOpen = false;
+            awaitingClarification = false;
             updatePlanningUI(false);
             enableExportBtn(false);
             document.getElementById('proposalPanel').classList.remove('open');

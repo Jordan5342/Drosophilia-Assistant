@@ -43,11 +43,18 @@ def chat():
         user_message = data.get('message', '')
         session_id = data.get('session_id', 'default')
         force_planning = data.get('force_planning', False)  # from "Plan Research" button
+        client_awaiting = data.get('awaiting_clarification', False)  # client-side state
 
         if not user_message:
             return jsonify({'error': 'No message provided'}), 400
 
         session_assistant = get_session(session_id)
+
+        # Restore client-side planning state if server session was reset (e.g. after restart)
+        if client_awaiting and not session_assistant.awaiting_clarification:
+            print(f"  ♻️  Restoring awaiting_clarification from client state")
+            session_assistant.awaiting_clarification = True
+            session_assistant.planning_mode = True
 
         try:
             signal.signal(signal.SIGALRM, timeout_handler)
