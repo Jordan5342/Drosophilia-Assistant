@@ -380,13 +380,10 @@ class DrosophilaAssistant:
 
             drosophila_papers.sort(key=lambda p: p.get('_relevance_score', 0), reverse=True)
 
-            # Apply minimum similarity threshold — drop papers with near-zero similarity
-            MIN_SIMILARITY = 0.05
-            before = len(drosophila_papers)
-            drosophila_papers = [p for p in drosophila_papers if p.get('_relevance_score', 0) >= MIN_SIMILARITY]
-            below_threshold = before - len(drosophila_papers)
-            if below_threshold > 0:
-                print(f"    ❌ Dropped (low TF-IDF similarity): {below_threshold} papers")
+            # No threshold — keep all Drosophila papers, just reorder by TF-IDF score.
+            # The hard Drosophila filter above already ensures organism relevance.
+            # TF-IDF's job here is ranking, not filtering.
+            print(f"    ℹ️  TF-IDF ranked {len(drosophila_papers)} papers")
 
         except Exception as e:
             print(f"    ⚠️  TF-IDF scoring failed ({e}), using unranked Drosophila papers")
