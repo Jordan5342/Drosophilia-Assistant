@@ -797,6 +797,12 @@
                     awaitingClarification = false;
                 }
 
+                // If experiment design came back via chat, also show it in the panel
+                if (data.experiment_design && data.aim_number) {
+                    openProposalPanel();
+                    designExperiment(data.aim_number);
+                }
+
                 if (data.ready_for_export && data.has_proposal) {
                     proposalReady = true;
                     enableExportBtn(true);

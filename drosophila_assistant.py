@@ -5,7 +5,7 @@ import json
 import requests
 from typing import Optional, Dict, List
 import re
-from research_planner import ResearchPlanner, detect_planning_intent
+from research_planner import ResearchPlanner, detect_planning_intent, detect_experiment_design_intent
 
 # Configure Entrez
 Entrez.email = "jordanszt@icloud.com"
@@ -747,6 +747,51 @@ class DrosophilaAssistant:
         """
         print(f"\n{'='*70}\nQuery: {user_message[:80]}\n{'='*70}")
 
+        # Check for experiment design intent — redirect to panel buttons
+        msg_lower = user_message.lower()
+        experiment_design_phrases = [
+            'do the experiment', 'design the experiment', 'run aim', 'do aim',
+            'experiment for aim', 'design aim', 'protocol for aim', 'how to run aim'
+        ]
+        if any(phrase in msg_lower for phrase in experiment_design_phrases) and self.planner.current_proposal:
+            aims = self.planner.current_proposal.get('specific_aims', [])
+            aim_list = ', '.join([f"Aim {a.get('aim_number')}: {a.get('title', '')}" for a in aims])
+            return {
+                'response': f"💡 To design a bench-ready protocol for a specific aim, click the aim buttons in the **Research Proposal panel** on the right.\n\nYour current proposal has:\n{aim_list}\n\nClick **Aim 1**, **Aim 2**, or **Aim 3** in the panel to generate a full experiment design including cross scheme, timepoints, data collection sheet, and go/no-go criteria.",
+                'is_planning': False,
+                'proposal': None,
+                'ready_for_export': False
+            }
+
+        # Check for experiment design intent first (most specific)
+        is_experiment_design, aim_number = detect_experiment_design_intent(user_message)
+        if is_experiment_design and self.planner.current_proposal:
+            print(f"  🧪 Experiment design intent detected for Aim {aim_number}")
+            aim = next((a for a in self.planner.current_proposal.get('specific_aims', [])
+                       if a.get('aim_number') == aim_number), None)
+            if aim:
+                design = self.planner.generate_experiment_design(aim, self.planner.current_proposal)
+                formatted = self.planner.format_experiment_design(design)
+                self.conversation_history.append({"role": "user", "content": user_message})
+                self.conversation_history.append({"role": "assistant", "content": formatted})
+                return {
+                    'response': formatted,
+                    'is_planning': True,
+                    'proposal': None,
+                    'ready_for_export': False,
+                    'experiment_design': True,
+                    'aim_number': aim_number
+                }
+            else:
+                # Aim not found — tell user which aims exist
+                aims = [a.get('aim_number') for a in self.planner.current_proposal.get('specific_aims', [])]
+                return {
+                    'response': f"I don't see Aim {aim_number} in the current proposal. Available aims: {aims}. Click the aim button in the panel or ask for one of those.",
+                    'is_planning': False,
+                    'proposal': None,
+                    'ready_for_export': False
+                }
+
         # Check for planning intent
         has_prior_context = bool(self.last_topic or self.last_papers)
         is_planning, confidence = detect_planning_intent(user_message, has_prior_context)
@@ -819,7 +864,11 @@ class DrosophilaAssistant:
         # Cache for planner
         if all_papers:
             self.last_papers = all_papers
-        self.last_topic = user_message[:100]
+        # Only update last_topic if this isn't a planning trigger phrase
+        from research_planner import detect_planning_intent
+        _is_plan, _ = detect_planning_intent(user_message, False)
+        if not _is_plan and len(user_message.split()) > 3:
+            self.last_topic = user_message[:100]
 
         publication_context = self.format_papers(all_papers) if all_papers else ""
         enhanced_message = user_message

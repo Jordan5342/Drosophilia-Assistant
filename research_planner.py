@@ -31,6 +31,33 @@ PROPOSAL_SECTIONS = [
 ]
 
 
+EXPERIMENT_DESIGN_PATTERNS = [
+    r'design\s+(the\s+)?experiment\s+(for\s+)?aim\s*(\d+)',
+    r'(do|run|build|create|show|generate)\s+(the\s+)?experiment\s+(for\s+)?aim\s*(\d+)',
+    r'aim\s*(\d+)\s+experiment',
+    r'(protocol|methods?|how\s+to\s+(run|do|conduct))\s+(for\s+)?aim\s*(\d+)',
+    r'design\s+aim\s*(\d+)',
+    r'(experiment|protocol)\s+design\s+(for\s+)?aim\s*(\d+)',
+]
+
+def detect_experiment_design_intent(message: str) -> Tuple[bool, int]:
+    """
+    Detect if user wants to design an experiment for a specific aim.
+    Returns (is_experiment_design, aim_number).
+    """
+    import re
+    msg_lower = message.lower()
+    for pattern in EXPERIMENT_DESIGN_PATTERNS:
+        m = re.search(pattern, msg_lower)
+        if m:
+            # Extract aim number from any group
+            for g in m.groups():
+                if g and g.isdigit():
+                    return True, int(g)
+            return True, 1  # default to aim 1 if no number found
+    return False, 0
+
+
 def detect_planning_intent(message: str, has_prior_context: bool = False) -> Tuple[bool, str]:
     """
     Detect if message has research planning intent.
@@ -162,7 +189,7 @@ IMPORTANT: The literature provided is thin (fewer than 3 papers). This means:
 Generate a complete research proposal in JSON format. The proposal must be specific and grounded — not generic.
 
 CRITICAL RULES:
-1. Cite the provided papers using [1], [2], etc. throughout. If fewer than 3 papers are provided, acknowledge this explicitly.
+1. ONLY cite papers from the PROVIDED LITERATURE LIST using [1], [2], etc. Do NOT invent or hallucinate citations not in the provided list — even if you know real papers exist on the topic. If the provided literature is thin for a section, flag it as a literature gap rather than adding invented references.
 2. Do NOT include unsourced generic statements (e.g. "The insulin signaling pathway is conserved across species..." with no citation). Every factual claim must be cited — either from the provided papers, or from well-established literature (textbooks, review articles) with a proper reference added to the references section. Cited textbook and review knowledge is encouraged and makes for a stronger background. Uncited filler is not acceptable.
 3. If literature is thin, flag it honestly: "⚠️ LITERATURE GAP: [specific gap]" and keep that section shorter rather than filling it with textbook knowledge.
 4. Experimental approaches must name SPECIFIC tools: exact GAL4 drivers, specific UAS lines, specific assays with parameters (e.g. "CAFE assay measuring food intake at days 5, 15, 30").
