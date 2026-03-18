@@ -865,7 +865,6 @@ class DrosophilaAssistant:
         if all_papers:
             self.last_papers = all_papers
         # Only update last_topic if this isn't a planning trigger phrase
-        from research_planner import detect_planning_intent
         _is_plan, _ = detect_planning_intent(user_message, False)
         if not _is_plan and len(user_message.split()) > 3:
             self.last_topic = user_message[:100]
