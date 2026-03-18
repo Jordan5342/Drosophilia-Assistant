@@ -752,14 +752,15 @@ class DrosophilaAssistant:
         has_prior_context = bool(self.last_topic or self.last_papers)
         is_planning, confidence = detect_planning_intent(user_message, has_prior_context)
 
-        # If awaiting clarification, only route to planner if message looks like
+        # If awaiting clarification, route to planner if message looks like
         # an answer (short, descriptive) rather than a new research question.
+        # NOTE: do NOT require self.planning_mode — it isn't set yet on the turn
+        # when the user answers clarifying questions (it gets set after the call).
         is_clarification_answer = (
             self.awaiting_clarification
-            and self.planning_mode
-            and not is_planning  # not a new planning request
-            and len(user_message.split()) < 60  # reasonably short
-            and '?' not in user_message[:20]  # doesn't start as a question
+            and not is_planning  # not a new explicit planning request
+            and len(user_message.split()) < 80  # reasonably short answer
+            and not user_message.strip().startswith('?')  # doesn't start as a question
         )
 
         if force_planning or is_planning or is_clarification_answer:
@@ -781,7 +782,15 @@ class DrosophilaAssistant:
 
         # ── Normal chat mode ──────────────────────────────────────────────────
         self.planning_mode = False
-        self.awaiting_clarification = False  # reset if user went back to normal chat
+        # Only reset awaiting_clarification if this is clearly a new unrelated question
+        # (i.e. not a short answer that just failed the is_clarification_answer check)
+        if not self.awaiting_clarification:
+            pass  # already false, nothing to reset
+        else:
+            # Keep awaiting_clarification=True only if message is very short
+            # (user typed something ambiguous). Reset if it's a full research question.
+            if len(user_message.split()) > 15:
+                self.awaiting_clarification = False
         all_papers = []
 
         genes = self.extract_gene_names(user_message)
