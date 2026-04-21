@@ -1,4 +1,5 @@
 anthropic>=0.39.0
+psycopg2-binary>=2.9.0
 biopython>=1.84
 flask>=3.0.0
 flask-cors>=4.0.0

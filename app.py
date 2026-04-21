@@ -6,14 +6,25 @@ import json
 import signal
 from drosophila_assistant import DrosophilaAssistant
 from agents.pipeline import AgentPipeline
+import database
 
 DEBUG_AGENTS = os.environ.get("DEBUG_AGENTS", "false").lower() == "true"
 
 app = Flask(__name__, static_folder='static')
 CORS(app)
 
+# Runs under both gunicorn and direct python execution
+if os.environ.get("DATABASE_URL"):
+    try:
+        database.init_db()
+    except Exception as _db_init_exc:
+        print(f"⚠️  Database init failed at startup: {_db_init_exc}")
+
 api_key = os.environ.get("ANTHROPIC_API_KEY")
 assistant = DrosophilaAssistant(api_key) if api_key else None
+
+# In-memory cache per worker — DB is the source of truth.
+# On a cache miss, get_session() hydrates from DB before returning.
 conversations = {}
 
 
@@ -26,9 +37,62 @@ def timeout_handler(signum, frame):
 
 
 def get_session(session_id: str) -> DrosophilaAssistant:
-    if session_id not in conversations:
-        conversations[session_id] = DrosophilaAssistant(api_key)
-    return conversations[session_id]
+    if session_id in conversations:
+        return conversations[session_id]
+
+    sess = DrosophilaAssistant(api_key)
+
+    try:
+        state = database.load_session(session_id)
+        if state:
+            sess.last_topic = state["last_topic"]
+            sess.last_genes = state["last_genes"]
+            sess.planning_mode = state["planning_mode"]
+            sess.awaiting_clarification = state["awaiting_clarification"]
+
+        history = database.load_conversation(session_id)
+        if history:
+            sess.conversation_history = history
+
+        proposal_data = database.load_proposal(session_id)
+        if proposal_data:
+            sess.planner.current_proposal = proposal_data["proposal"]
+            ctx = proposal_data["proposal_context"]
+            if ctx:
+                sess.planner.proposal_context = ctx
+
+        papers = database.load_papers(session_id)
+        if papers:
+            sess.last_papers = papers
+
+    except Exception as exc:
+        print(f"  ⚠️  DB load error for {session_id} (starting fresh): {exc}")
+
+    conversations[session_id] = sess
+    return sess
+
+
+def _persist_session(session_id: str, sess: DrosophilaAssistant) -> None:
+    """Save all mutable session state back to DB. Non-fatal on failure."""
+    try:
+        database.save_session(
+            session_id,
+            last_topic=sess.last_topic or "",
+            last_genes=list(sess.last_genes) if sess.last_genes else [],
+            planning_mode=bool(sess.planning_mode),
+            awaiting_clarification=bool(sess.awaiting_clarification),
+        )
+        database.save_conversation(session_id, sess.conversation_history or [])
+        if sess.planner.current_proposal is not None:
+            database.save_proposal(
+                session_id,
+                sess.planner.current_proposal,
+                sess.planner.proposal_context or {},
+            )
+        if sess.last_papers:
+            database.save_papers(session_id, sess.last_papers)
+    except Exception as exc:
+        print(f"  ⚠️  DB save error for {session_id} (non-fatal): {exc}")
 
 
 @app.route('/')
@@ -74,6 +138,8 @@ def chat():
             except (AttributeError, ValueError):
                 pass
 
+            _persist_session(session_id, session_assistant)
+
             return jsonify({
                 'response': result['response'],
                 'is_planning': result['is_planning'],
@@ -111,6 +177,11 @@ def reset():
         session_id = data.get('session_id', 'default')
         if session_id in conversations:
             conversations[session_id].reset_conversation()
+            del conversations[session_id]
+        try:
+            database.delete_session(session_id)
+        except Exception as exc:
+            print(f"  ⚠️  DB delete error on reset (non-fatal): {exc}")
         return jsonify({'status': 'success'})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -122,11 +193,11 @@ def export_conversation():
         data = request.get_json()
         session_id = data.get('session_id', 'default')
 
-        if session_id not in conversations:
-            return jsonify({'error': 'No conversation found'}), 404
-
-        session_assistant = conversations[session_id]
+        session_assistant = get_session(session_id)
         history = session_assistant.conversation_history
+
+        if not history:
+            return jsonify({'error': 'No conversation found'}), 404
 
         markdown = "# Drosophila Research Conversation\n\n"
         markdown += f"Exported: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n---\n\n"
@@ -924,6 +995,14 @@ def stats():
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
+
+    if os.environ.get("DATABASE_URL"):
+        try:
+            database.init_db()
+        except Exception as _db_exc:
+            print(f"⚠️  Database init failed: {_db_exc}")
+    else:
+        print("⚠️  DATABASE_URL not set — running without persistence")
 
     if not api_key:
         print("\n" + "="*60)
