@@ -10,6 +10,7 @@ from research_planner import ResearchPlanner, detect_planning_intent, detect_exp
 
 # Configure Entrez
 Entrez.email = "jordanszt@icloud.com"
+Entrez.api_key = os.environ.get("NCBI_API_KEY", "")
 
 # Load full FlyBase gene database at module startup
 _GENE_DB = {}
@@ -109,8 +110,8 @@ class DrosophilaAssistant:
                     break
 
             if not pmids:
-                print(f"    ℹ️  No linked publications for {fbgn}")
-                return []
+                print(f"    ℹ️  No linked publications for {fbgn}, falling back to PubMed search")
+                return self._fallback_pubmed_search(fbgn, max_results)
 
             pmids = pmids[:max_results]
 
@@ -151,6 +152,49 @@ class DrosophilaAssistant:
 
         except Exception as e:
             print(f"  ⚠️  NCBI lookup failed for {fbgn}: {e}")
+            return self._fallback_pubmed_search(fbgn, max_results)
+
+    def _fallback_pubmed_search(self, fbgn: str, max_results: int) -> List[Dict]:
+        try:
+            entry = next((v for v in _GENE_DB.values() if v.get('fbgn') == fbgn), None)
+            gene_name = entry['symbol'] if entry else fbgn
+            handle = Entrez.esearch(db="pubmed", term=f"Drosophila AND {gene_name}", retmax=max_results + 2, sort="relevance")
+            record = Entrez.read(handle)
+            handle.close()
+            pmids = record.get("IdList", [])[:max_results]
+            if not pmids:
+                return []
+            handle = Entrez.efetch(db="pubmed", id=pmids, rettype="abstract", retmode="xml")
+            records = Entrez.read(handle)
+            handle.close()
+            publications = []
+            for article in records.get('PubmedArticle', []):
+                try:
+                    medline = article['MedlineCitation']
+                    article_data = medline['Article']
+                    title = article_data.get('ArticleTitle', 'No title')
+                    abstract = article_data.get('Abstract', {}).get('AbstractText', [''])
+                    abstract = ' '.join(str(a) for a in abstract) if isinstance(abstract, list) else str(abstract)
+                    authors = []
+                    for author in article_data.get('AuthorList', [])[:3]:
+                        if 'LastName' in author:
+                            authors.append(f"{author['LastName']} {author.get('Initials', '')}")
+                    pmid = str(medline['PMID'])
+                    pub_date = article_data.get('Journal', {}).get('JournalIssue', {}).get('PubDate', {})
+                    year = pub_date.get('Year', 'N/A')
+                    publications.append({
+                        'title': title,
+                        'authors': ', '.join(authors) + ' et al.' if authors else 'Unknown',
+                        'year': year,
+                        'pmid': pmid,
+                        'abstract': abstract[:500] + '...' if len(abstract) > 500 else abstract,
+                        'url': f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
+                        'source': 'PubMed',
+                    })
+                except Exception:
+                    continue
+            return publications
+        except Exception:
             return []
 
     def filter_relevant_papers(self, papers: List[Dict], topic: str, genes: List[str], user_clarifications: str = "") -> List[Dict]:
@@ -286,7 +330,7 @@ class DrosophilaAssistant:
                    'me', 'about', 'a', 'n', 'the', 'of', 'in', 'sleep', 'memory', 'behavior'}
         text_lower = text.lower()
 
-        for gene_key in KNOWN_GENES.keys():
+        for gene_key in _GENE_DB.keys():
             if len(gene_key) > 1 and gene_key in text_lower and gene_key not in exclude:
                 potential_genes.append(gene_key)
 
@@ -325,6 +369,68 @@ class DrosophilaAssistant:
         formatted += "="*70 + "\n\n"
         return formatted
 
+    # Maps keyword sets → focused PubMed query (no "aging" unless the topic is aging)
+    _TOPIC_QUERY_MAP = [
+        (['lifespan', 'longevity', 'aging', 'ageing'],
+            "Drosophila lifespan extension insulin signaling FOXO"),
+        (['locomotor', 'climbing', 'movement', 'motor'],
+            "Drosophila locomotor activity climbing assay neuromuscular"),
+        (['fat body', 'adipose', 'metabolic', 'metabolism', 'lipid'],
+            "Drosophila fat body metabolism lipid storage"),
+        (['neuron', 'brain', 'neurodegeneration', 'cognitive', 'memory', 'neural'],
+            "Drosophila neurodegeneration memory learning brain"),
+        (['sleep', 'circadian', 'rhythm'],
+            "Drosophila sleep circadian clock regulation"),
+        (['gut', 'intestin', 'microbiome'],
+            "Drosophila intestine gut stem cell homeostasis"),
+        (['muscle', 'sarcopenia', 'flight'],
+            "Drosophila muscle development flight sarcopenia"),
+        (['stress', 'oxidative', 'ros', 'reactive oxygen'],
+            "Drosophila oxidative stress ROS resistance"),
+        (['autophagy', 'atg', 'lysosome'],
+            "Drosophila autophagy ATG protein degradation"),
+        (['tor', 'rapamycin', 'mtor', 'torc'],
+            "Drosophila TOR signaling rapamycin nutrient sensing"),
+        (['foxo', 'forkhead'],
+            "Drosophila FOXO transcription factor stress"),
+        (['inr', 'insulin', 'dilp', 'igf'],
+            "Drosophila insulin signaling InR DILP"),
+        (['notch', 'delta', 'serrate', 'jagged'],
+            "Drosophila Notch signaling lateral inhibition"),
+        (['wnt', 'wingless', 'armadillo', 'frizzled'],
+            "Drosophila Wingless Wnt signaling development"),
+        (['hedgehog', 'patched', 'smoothened'],
+            "Drosophila Hedgehog signaling patterning"),
+        (['jak', 'stat', 'hopscotch'],
+            "Drosophila JAK STAT signaling immunity"),
+        (['immunity', 'immune', 'toll', 'imd', 'infection', 'antimicrobial'],
+            "Drosophila innate immunity Toll IMD antimicrobial"),
+        (['apoptosis', 'cell death', 'reaper', 'caspase'],
+            "Drosophila apoptosis cell death caspase"),
+        (['stem cell', 'niche', 'progenitor'],
+            "Drosophila stem cell niche self-renewal"),
+        (['cancer', 'tumor', 'proliferation', 'neoplasm'],
+            "Drosophila tumor cancer cell proliferation"),
+        (['mitochondria', 'mitochondrial', 'electron transport', 'oxidative phosphorylation'],
+            "Drosophila mitochondria electron transport chain"),
+        (['epigenetic', 'chromatin', 'histone', 'methylation'],
+            "Drosophila epigenetics chromatin remodeling"),
+        (['development', 'patterning', 'morphogen'],
+            "Drosophila development patterning body plan"),
+    ]
+
+    def _build_topic_queries(self, combined: str, topic: str) -> List[str]:
+        def matches(kw: str) -> bool:
+            return bool(re.search(r'\b' + re.escape(kw) + r'\b', combined))
+
+        queries = [
+            query for keywords, query in self._TOPIC_QUERY_MAP
+            if any(matches(kw) for kw in keywords)
+        ]
+        if not queries:
+            queries = [f"Drosophila {topic}"]
+        return queries
+
     def fetch_literature_for_proposal(self, topic: str, genes: List[str], user_clarifications: str = "") -> List[Dict]:
         """
         Dedicated literature fetch for proposal generation.
@@ -357,41 +463,9 @@ class DrosophilaAssistant:
             add_papers(papers)
 
         # Search 3: Topic-specific searches
-        topic_queries = []
-
-        # Extract key biological terms from topic + clarifications
-        # Strip scope words before keyword matching to avoid false topic detection
         clean_clarifs = self.planner.strip_scope_words(user_clarifications) if user_clarifications else ""
         combined = f"{topic} {clean_clarifs}".lower()
-
-        if any(w in combined for w in ['lifespan', 'longevity', 'aging', 'ageing']):
-            topic_queries.append("Drosophila lifespan extension insulin signaling FOXO")
-        if any(w in combined for w in ['locomotor', 'climbing', 'movement', 'motor']):
-            topic_queries.append("Drosophila locomotor aging decline")
-        if any(w in combined for w in ['fat body', 'adipose', 'metabolic']):
-            topic_queries.append("Drosophila fat body aging metabolism")
-        if any(w in combined for w in ['neuron', 'brain', 'cognitive', 'memory', 'neural']):
-            topic_queries.append("Drosophila neuronal aging brain")
-        if any(w in combined for w in ['sleep']):
-            topic_queries.append("Drosophila sleep aging circadian")
-        if any(w in combined for w in ['gut', 'intestin']):
-            topic_queries.append("Drosophila gut aging intestine stem cell")
-        if any(w in combined for w in ['muscle', 'sarcopenia']):
-            topic_queries.append("Drosophila muscle aging sarcopenia")
-        if any(w in combined for w in ['stress', 'oxidative', 'ros']):
-            topic_queries.append("Drosophila oxidative stress resistance aging")
-        if any(w in combined for w in ['autophagy', 'atg']):
-            topic_queries.append("Drosophila autophagy aging lifespan")
-        if any(w in combined for w in ['tor', 'rapamycin', 'mtor']):
-            topic_queries.append("Drosophila TOR signaling aging rapamycin")
-        if any(w in combined for w in ['foxo', 'forkhead']):
-            topic_queries.append("Drosophila FOXO transcription factor lifespan")
-        if any(w in combined for w in ['inr', 'insulin', 'dilp', 'igf']):
-            topic_queries.append("Drosophila insulin signaling InR aging lifespan")
-
-        # Default broad search if no specific matches
-        if not topic_queries:
-            topic_queries = [f"Drosophila {topic}"]
+        topic_queries = self._build_topic_queries(combined, topic)
 
         for query in topic_queries[:4]:  # limit to 4 topic searches
             papers = self.search_pubmed(query, max_results=4)

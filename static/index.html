@@ -865,7 +865,12 @@
 
 <script>
     const API_URL = '/api';
-    const sessionId = 'session_' + Date.now();
+    const sessionId = (() => {
+        const key = 'drosophila_session_id';
+        let id = localStorage.getItem(key);
+        if (!id) { id = 'session_' + Date.now(); localStorage.setItem(key, id); }
+        return id;
+    })();
     let isTyping = false;
     let inPlanningMode = false;
     let proposalReady = false;
@@ -1556,6 +1561,8 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ session_id: sessionId })
             });
+            localStorage.removeItem('drosophila_session_id');
+            location.reload();
             document.getElementById('messages').innerHTML = `
                 <div class="welcome-screen">
                     <div class="icon">🪰</div>
