@@ -1,10 +1,13 @@
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, Response, stream_with_context
 from flask_cors import CORS
 import os
 from datetime import datetime
 import json
 import signal
 from drosophila_assistant import DrosophilaAssistant
+from agents.pipeline import AgentPipeline
+
+DEBUG_AGENTS = os.environ.get("DEBUG_AGENTS", "false").lower() == "true"
 
 app = Flask(__name__, static_folder='static')
 CORS(app)
@@ -826,6 +829,73 @@ Packer.toBuffer(doc).then(buf => {{
         print(f"Export design error: {str(e)}")
         import traceback; traceback.print_exc()
         return jsonify({'error': str(e)}), 500
+
+@app.route('/api/agent_pipeline', methods=['POST'])
+def agent_pipeline():
+    """
+    Run the three-agent pipeline (Literature → Hypothesis → Critic) with SSE streaming.
+    Set DEBUG_AGENTS=true in env to receive full per-iteration JSON in the stream.
+    """
+    if not assistant:
+        return jsonify({'error': 'API key not configured. Set ANTHROPIC_API_KEY.'}), 500
+
+    try:
+        data = request.get_json()
+        query = data.get('query', '').strip()
+        session_id = data.get('session_id', 'default')
+
+        if not query:
+            return jsonify({'error': 'No query provided'}), 400
+
+        session_assistant = get_session(session_id)
+
+        # Extract topic and gene list using existing helpers
+        topic = session_assistant.planner.extract_topic_from_message(query) or query[:120]
+        genes = session_assistant.extract_gene_names(query)
+        if not genes and session_assistant.last_genes:
+            genes = session_assistant.last_genes
+
+        print(f"\n{'='*70}")
+        print(f"[Agent Pipeline] Query: {query[:80]}")
+        print(f"[Agent Pipeline] Topic: {topic[:60]} | Genes: {genes}")
+        print(f"[Agent Pipeline] DEBUG_AGENTS={DEBUG_AGENTS}")
+        print(f"{'='*70}")
+
+        pipeline = AgentPipeline(
+            client=session_assistant.client,
+            fetch_literature_fn=session_assistant.fetch_literature_for_proposal
+        )
+
+        def generate():
+            try:
+                for event in pipeline.run_streaming(
+                    query=query,
+                    topic=topic,
+                    genes=genes,
+                    debug=DEBUG_AGENTS
+                ):
+                    yield f"event: {event['type']}\ndata: {json.dumps(event['data'])}\n\n"
+            except Exception as exc:
+                import traceback
+                traceback.print_exc()
+                yield f"event: error\ndata: {json.dumps({'message': str(exc)})}\n\n"
+
+        return Response(
+            stream_with_context(generate()),
+            content_type='text/event-stream',
+            headers={
+                'Cache-Control': 'no-cache',
+                'X-Accel-Buffering': 'no',
+                'Connection': 'keep-alive'
+            }
+        )
+
+    except Exception as exc:
+        print(f"Agent pipeline error: {exc}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(exc)}), 500
+
 
 @app.route('/api/health', methods=['GET'])
 def health():
