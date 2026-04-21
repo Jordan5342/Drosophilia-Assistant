@@ -93,9 +93,6 @@ def _kv(doc, label, value, value_color=None):
 def _bullet(doc, text):
     p = doc.add_paragraph(style='List Bullet')
     _spacing(p, 2, 2)
-    # Clear default run added by add_paragraph and add our own styled run
-    for run in p.runs:
-        run.text = ''
     _run(p, text or '', 11, GRAY)
     return p
 

@@ -509,9 +509,10 @@ class DrosophilaAssistant:
                 add_papers(pubs)
                 print(f"    FlyBase {gene}: {len(pubs)} papers")
 
-        # Search 2: Gene + aging
+        # Search 2: Gene + topic keywords
+        topic_keywords = " ".join(topic.split()[:4])
         for gene in genes[:2]:
-            papers = self.search_pubmed(f"{gene} aging lifespan longevity", max_results=5)
+            papers = self.search_pubmed(f"{gene} {topic_keywords}", max_results=5)
             add_papers(papers)
 
         # Search 3: Topic-specific searches
@@ -549,15 +550,16 @@ class DrosophilaAssistant:
 
         # Default broad search if no specific matches
         if not topic_queries:
-            topic_queries = [f"Drosophila {topic} aging"]
+            topic_queries = [f"Drosophila {topic}"]
 
         for query in topic_queries[:4]:  # limit to 4 topic searches
             papers = self.search_pubmed(query, max_results=4)
             add_papers(papers)
             print(f"    PubMed '{query[:50]}': {len(papers)} papers")
 
-        # Search 4: Key review papers — always useful for proposals
-        review_papers = self.search_pubmed("Drosophila aging review mechanisms longevity", max_results=3)
+        # Search 4: Review papers scoped to the actual topic
+        review_query = f"Drosophila {' '.join(topic.split()[:3])} review"
+        review_papers = self.search_pubmed(review_query, max_results=3)
         add_papers(review_papers)
 
         # Filter for relevance before returning — drop non-Drosophila and off-topic papers

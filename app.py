@@ -224,10 +224,7 @@ def export_proposal():
         data = request.get_json()
         session_id = data.get('session_id', 'default')
 
-        if session_id not in conversations:
-            return jsonify({'error': 'No active session found'}), 404
-
-        session_assistant = conversations[session_id]
+        session_assistant = get_session(session_id)
         proposal = session_assistant.planner.get_proposal_for_export()
 
         if not proposal:
