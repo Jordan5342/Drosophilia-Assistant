@@ -651,9 +651,29 @@ class DrosophilaAssistant:
                 'ready_for_export': True
             }
 
-        # No prior clarifications — ask questions for the first time
-        print("  ❓ Asking clarifying questions for better specificity...")
-        question = self.planner.generate_clarifying_questions(topic, genes)
+        # No prior clarifications — check if existing context is sufficient
+        print("  ❓ Checking if clarifying questions are needed...")
+        question = self.planner.generate_clarifying_questions(topic, genes, self.conversation_history)
+
+        if question is None:
+            print("  ✅ Sufficient context — skipping clarification")
+            self.planner.set_context_from_chat(topic, genes, papers)
+            proposal_papers = self.fetch_literature_for_proposal(
+                topic=topic, genes=genes, user_clarifications=topic
+            )
+            self.planner.set_context_from_chat(topic, genes, proposal_papers)
+            proposal = self.planner.generate_proposal(
+                topic=topic, genes=genes, papers=proposal_papers,
+                conversation_history=self.conversation_history
+            )
+            formatted = self.planner.format_proposal_for_chat(proposal)
+            return {
+                'type': 'proposal',
+                'content': formatted,
+                'proposal': proposal,
+                'ready_for_export': True
+            }
+
         self.planner.set_context_from_chat(topic, genes, papers)
         self.awaiting_clarification = True
         return {

@@ -1883,8 +1883,47 @@
         body.scrollTop = body.scrollHeight;
     }
 
+    async function restoreSession() {
+        try {
+            const histRes = await fetch(`${API_URL}/chat_history`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: sessionId })
+            });
+            const histData = await histRes.json();
+            if (!histData.history || histData.history.length === 0) return;
+
+            const welcome = document.querySelector('.welcome-screen');
+            if (welcome) welcome.remove();
+
+            for (const msg of histData.history) {
+                if (msg.role === 'user') {
+                    addMessage(msg.content, 'user');
+                } else {
+                    const isPlanning = msg.content.includes('## 📄') ||
+                                       msg.content.includes('Research Planner');
+                    addMessage(msg.content, isPlanning ? 'planning' : 'assistant');
+                }
+            }
+
+            // Restore export button if a proposal exists
+            const propRes = await fetch(`${API_URL}/export_proposal`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: sessionId })
+            });
+            const propData = await propRes.json();
+            if (propData.status === 'success') {
+                proposalReady = true;
+                enableExportBtn(true);
+            }
+        } catch {}
+    }
+
     checkHealth();
-    document.getElementById('messageInput').focus();
+    restoreSession().then(() => {
+        document.getElementById('messageInput').focus();
+    });
 </script>
 </body>
 </html>

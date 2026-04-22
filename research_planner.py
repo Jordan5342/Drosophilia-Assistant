@@ -130,31 +130,48 @@ class ResearchPlanner:
         topic = clean.strip().strip(',').strip()
         return topic if topic else message.strip()
 
-    def generate_clarifying_questions(self, topic: str, genes: List[str]) -> str:
+    def generate_clarifying_questions(self, topic: str, genes: List[str],
+                                       conversation_history: List[Dict] = None) -> Optional[str]:
         """
-        Ask thorough clarifying questions before generating the proposal.
-        More questions = better proposal. Err on the side of asking more.
+        Ask clarifying questions before generating the proposal.
+        Returns None if the existing context is already sufficient.
         """
         gene_str = ', '.join(genes) if genes else 'not yet specified'
 
-        prompt = f"""A grad student or postdoc wants to build a Drosophila research proposal about: "{topic}"
-Identified genes so far: {gene_str}
+        context_summary = ""
+        if conversation_history:
+            recent = conversation_history[-6:]
+            lines = []
+            for msg in recent:
+                role = "Researcher" if msg['role'] == 'user' else "Assistant"
+                content = msg['content']
+                if '======' in content:
+                    content = content.split('\n\n')[0]
+                lines.append(f"{role}: {content[:200]}")
+            context_summary = "\n".join(lines)
 
-You need to ask clarifying questions to write a specific, non-generic proposal. Ask about ALL of the following that are not already clear from the topic:
-1. The specific phenotype or biological readout (e.g. lifespan? sleep duration? locomotor decline? metabolic rate? memory?)
-2. Which tissue or cell type is the focus (e.g. fat body, neurons, gut, muscle, whole animal?)
-3. What genetic tools they have access to (specific GAL4 lines, UAS-RNAi stocks, CRISPR capability, specific mutant stocks?)
-4. Whether they have any preliminary data or a key paper already in mind that should anchor the proposal
-5. The scope of the project (lab rotation, thesis chapter, grant application?)
+        prompt = f"""A grad student wants to build a Drosophila research proposal about: "{topic}"
+Identified genes: {gene_str}
 
-Format as a friendly conversational paragraph asking 3-4 of these questions. More information leads to a better proposal so do not be shy about asking. Be direct and specific. Keep it under 120 words."""
+Recent conversation (use this to avoid asking things already answered):
+{context_summary if context_summary else "No prior conversation."}
+
+Ask ONLY about things not already clear from the topic and conversation above:
+1. Specific phenotype/readout (lifespan, locomotor decline, memory, sleep, etc.)
+2. Tissue or cell type focus (fat body, neurons, gut, muscle, whole animal)
+3. Genetic tools available (specific GAL4 lines, UAS-RNAi, CRISPR)
+4. Any preliminary data or anchor paper
+
+If the topic already specifies 3 or more of these, respond with exactly: SUFFICIENT
+Otherwise ask 2-3 focused questions in a friendly paragraph under 100 words."""
 
         response = self.client.messages.create(
             model="claude-sonnet-4-20250514",
             max_tokens=300,
             messages=[{"role": "user", "content": prompt}]
         )
-        return response.content[0].text
+        result = response.content[0].text.strip()
+        return None if result.startswith("SUFFICIENT") else result
 
     def generate_proposal(
         self,

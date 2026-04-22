@@ -187,6 +187,17 @@ def reset():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/chat_history', methods=['POST'])
+def chat_history():
+    try:
+        data = request.get_json()
+        session_id = data.get('session_id', 'default')
+        sess = get_session(session_id)
+        return jsonify({'history': sess.conversation_history or []})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/export', methods=['POST'])
 def export_conversation():
     try:
