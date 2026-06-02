@@ -114,9 +114,9 @@ class CriticAgent:
                 reviews[name] = review
 
         scores = {
-            "novelty":     reviews.get("novelty",     {}).get("score", 5),
-            "feasibility": reviews.get("feasibility", {}).get("score", 5),
-            "rigor":       reviews.get("rigor",       {}).get("score", 5),
+        "feasibility":    reviews.get("feasibility",    {}).get("score", 5),
+        "rigor":          reviews.get("rigor",          {}).get("score", 5),
+        "gap_specificity":reviews.get("gap_specificity",{}).get("score", 5),
         }
 
         all_issues = []
@@ -132,12 +132,11 @@ class CriticAgent:
         )
 
         verdict = "pass" if all(v >= 6 for v in scores.values()) else "fail"
-
         send_back_to = None
         if verdict == "fail":
             send_back_to = "hypothesis"
-            novelty_issues = " ".join(reviews.get("novelty", {}).get("issues", []))
-            if "literature" in novelty_issues.lower() or "papers" in novelty_issues.lower():
+            gap_issues = " ".join(reviews.get("gap_specificity", {}).get("issues", []))
+            if "literature" in gap_issues.lower() or "papers" in gap_issues.lower():
                 send_back_to = "literature"
 
         return {
