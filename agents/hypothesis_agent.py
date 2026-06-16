@@ -3,7 +3,7 @@ from typing import Dict, List, Optional
 import anthropic
 from agents import parse_json_response
 
-MODEL = "claude-sonnet-4-20250514"
+MODEL = "claude-sonnet-4-6"
 
 SYSTEM_PROMPT = """\
 You are a Drosophila melanogaster experimental design agent.
