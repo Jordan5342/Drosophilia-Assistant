@@ -166,7 +166,7 @@ If the topic already specifies 3 or more of these, respond with exactly: SUFFICI
 Otherwise ask 2-3 focused questions in a friendly paragraph under 100 words."""
 
         response = self.client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6",
             max_tokens=300,
             messages=[{"role": "user", "content": prompt}]
         )
@@ -298,7 +298,7 @@ REQUIREMENTS:
 
 
         response = self.client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6",
             max_tokens=4000,
             system=system_prompt,
             messages=[{"role": "user", "content": user_prompt}]
@@ -365,7 +365,7 @@ Researcher's refinement request: "{refinement_request}"
 Update the proposal accordingly and return the updated version with a changes summary."""
 
         response = self.client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6",
             max_tokens=4000,
             system=system_prompt,
             messages=[{"role": "user", "content": user_prompt}]
@@ -542,7 +542,7 @@ Controls: {proposal.get('controls', '')}
 Generate a complete bench-ready protocol. Be specific about genotypes, timing, and thresholds."""
 
         response = self.client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6",
             max_tokens=4000,
             system=system_prompt,
             messages=[{"role": "user", "content": user_prompt}]
