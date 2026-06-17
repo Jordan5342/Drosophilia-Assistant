@@ -1,7 +1,7 @@
 from typing import Dict, Generator, List, Optional
 from agents.literature_agent import LiteratureAgent
 from agents.hypothesis_agent import HypothesisAgent
-from agents.critic_agent import CriticAgent
+from agents.gemini_critic_agent import CriticAgent
 
 MAX_ITERATIONS = 3
 
