@@ -65,7 +65,7 @@ python app.py
 
 ## Status
 
-Actively in development. Currently running a proof-of-concept benchmark comparing the multi-agent pipeline against a plain LLM baseline across five tissue-specific gene perturbation topics, to generate preliminary data for a grant proposal.
+Actively in development.
 
 ## Credits
 
