@@ -162,6 +162,9 @@ def build_proposal_docx(proposal) -> bytes:
         _h1(doc, 'Automated Abstract Evidence Check')
         review = proposal['evidence_review']
         _body(doc, review.get('message') or 'No evidence review details are available.')
+        revision = review.get('revision') or {}
+        if revision.get('message'):
+            _body(doc, f"Revision pass: {revision['message']}")
         coverage = review.get('coverage') or {}
         if coverage.get('percent') is None:
             _body(doc, 'Coverage could not be calculated.')
@@ -180,10 +183,10 @@ def build_proposal_docx(proposal) -> bytes:
             )
             for claim in review.get('claims', []):
                 label = {
-                    'supported': 'Abstract evidence found',
-                    'not_found': 'Not found in supplied abstracts',
-                    'uncertain': 'Uncertain',
-                    'not_applicable': 'Proposal or prediction, not a factual claim',
+                    'supported': 'SUPPORTED',
+                    'not_found': 'NOT FOUND IN SUPPLIED ABSTRACTS',
+                    'uncertain': 'UNCERTAIN',
+                    'not_applicable': 'PROPOSAL/PREDICTION',
                 }.get(claim.get('status'), 'Uncertain')
                 _bullet(doc, f"{label}: {claim.get('claim', '')}")
                 evidence = claim.get('evidence')

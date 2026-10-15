@@ -475,7 +475,7 @@ class EvidenceVerifierTests(unittest.TestCase):
             "url": "https://pubmed.ncbi.nlm.nih.gov/12345678/",
         }]
 
-        review = verifier_module.verify_claims(
+        _, review = verifier_module.verify_and_revise_claims(
             "The study reports a role in sleep regulation [1].",
             papers,
             client,
@@ -495,9 +495,12 @@ class EvidenceVerifierTests(unittest.TestCase):
             "percent": 100,
         })
         self.assertEqual(client.messages.create.call_count, 2)
+        self.assertEqual(review["revision"]["status"], "not_needed")
         extraction_prompt = client.messages.create.call_args_list[0].kwargs["messages"][0]["content"]
         self.assertIn('"citation_number": 1', extraction_prompt)
         self.assertIn('"source_id": "12345678"', extraction_prompt)
+        formatted = verifier_module.format_evidence_review(review)
+        self.assertIn("✅ **SUPPORTED** —", formatted)
 
     def test_claim_is_uncertain_when_reported_quote_is_not_in_abstract(self):
         client = Mock()
@@ -602,6 +605,168 @@ class EvidenceVerifierTests(unittest.TestCase):
         self.assertEqual(review["status"], "checked")
         self.assertEqual(review["claims"][0]["source_ids"], ["12345678"])
         self.assertEqual(review["coverage"]["percent"], 100)
+
+    def test_unverified_claim_is_qualified_and_checked_again(self):
+        client = Mock()
+        original_claim = "The study found lifespan extension [1]."
+        revised_claim = "The supplied abstracts do not establish that the study found lifespan extension [1]."
+        client.messages.create.side_effect = [
+            types.SimpleNamespace(content=[types.SimpleNamespace(text=json.dumps({
+                "claims": [{
+                    "claim": original_claim,
+                    "evidence_type": "finding",
+                    "source_ids": ["12345678"],
+                }]
+            }))]),
+            types.SimpleNamespace(content=[types.SimpleNamespace(text=json.dumps({
+                "reviews": [{
+                    "claim_id": 1,
+                    "status": "not_found",
+                    "source_id": "",
+                    "evidence_quote": "",
+                    "reason": "The abstract does not report a lifespan result.",
+                }]
+            }))]),
+            types.SimpleNamespace(content=[types.SimpleNamespace(text=json.dumps({
+                "revisions": [{"claim_id": 1, "revised_claim": revised_claim}]
+            }))]),
+            types.SimpleNamespace(content=[types.SimpleNamespace(text=json.dumps({
+                "claims": [{
+                    "claim": revised_claim,
+                    "evidence_type": "finding",
+                    "source_ids": ["12345678"],
+                }]
+            }))]),
+            types.SimpleNamespace(content=[types.SimpleNamespace(text=json.dumps({
+                "reviews": [{
+                    "claim_id": 1,
+                    "status": "not_found",
+                    "source_id": "",
+                    "evidence_quote": "",
+                    "reason": "The abstract does not establish this point.",
+                }]
+            }))]),
+        ]
+        original = {
+            "answer": original_claim,
+            "evidence_claims": [{
+                "claim": original_claim,
+                "evidence_type": "finding",
+                "source_ids": ["12345678"],
+            }],
+            "references": [{"citation": "Author et al. (2024). Verified source."}],
+        }
+
+        revised, review = verifier_module.verify_and_revise_claims(
+            original["answer"],
+            [{"pmid": "12345678", "abstract": "The study investigates sleep behavior in Drosophila."}],
+            client,
+            structured_claims=original["evidence_claims"],
+            content=original,
+        )
+
+        self.assertIn(revised_claim, revised["answer"])
+        self.assertEqual(revised["evidence_claims"][0]["claim"], revised_claim)
+        self.assertEqual(revised["references"], original["references"])
+        self.assertEqual(review["revision"]["status"], "applied")
+        self.assertEqual(review["claims"][0]["status"], "not_found")
+        self.assertEqual(client.messages.create.call_count, 5)
+        self.assertIn("checked again", verifier_module.format_evidence_review(review))
+
+    def test_failed_revision_keeps_original_claim_and_reports_failure(self):
+        client = Mock()
+        original_claim = "The study found lifespan extension [1]."
+        client.messages.create.side_effect = [
+            types.SimpleNamespace(content=[types.SimpleNamespace(text=json.dumps({
+                "claims": [{
+                    "claim": original_claim,
+                    "evidence_type": "finding",
+                    "source_ids": ["12345678"],
+                }]
+            }))]),
+            types.SimpleNamespace(content=[types.SimpleNamespace(text=json.dumps({
+                "reviews": [{
+                    "claim_id": 1,
+                    "status": "not_found",
+                    "source_id": "",
+                    "evidence_quote": "",
+                    "reason": "No matching evidence.",
+                }]
+            }))]),
+            types.SimpleNamespace(content=[types.SimpleNamespace(text='{"revisions":[]}')]),
+        ]
+
+        revised, review = verifier_module.verify_and_revise_claims(
+            original_claim,
+            [{"pmid": "12345678", "abstract": "The study investigates sleep behavior in Drosophila."}],
+            client,
+        )
+
+        self.assertEqual(revised, original_claim)
+        self.assertEqual(review["revision"]["status"], "failed")
+        self.assertEqual(review["claims"][0]["status"], "not_found")
+        self.assertEqual(client.messages.create.call_count, 3)
+
+    def test_disabled_auto_revision_leaves_reviewed_claim_unchanged(self):
+        client = Mock()
+        claim = "The study found lifespan extension [1]."
+        client.messages.create.side_effect = [
+            types.SimpleNamespace(content=[types.SimpleNamespace(text=json.dumps({
+                "claims": [{
+                    "claim": claim,
+                    "evidence_type": "finding",
+                    "source_ids": ["12345678"],
+                }]
+            }))]),
+            types.SimpleNamespace(content=[types.SimpleNamespace(text=json.dumps({
+                "reviews": [{
+                    "claim_id": 1,
+                    "status": "not_found",
+                    "source_id": "",
+                    "evidence_quote": "",
+                    "reason": "No matching abstract evidence.",
+                }]
+            }))]),
+        ]
+
+        revised, review = verifier_module.verify_and_revise_claims(
+            claim,
+            [{"pmid": "12345678", "abstract": "The study investigates sleep behavior in Drosophila."}],
+            client,
+            auto_revise=False,
+        )
+
+        self.assertEqual(revised, claim)
+        self.assertEqual(review["revision"]["status"], "disabled")
+        self.assertEqual(review["claims"][0]["status"], "not_found")
+        self.assertEqual(client.messages.create.call_count, 2)
+
+    def test_auto_revision_limit_prevents_large_revision_batches(self):
+        client = Mock()
+        review = {
+            "status": "needs_review",
+            "claims": [
+                {
+                    "claim_id": index,
+                    "claim": f"Unverified claim {index}.",
+                    "evidence_type": "finding",
+                    "source_ids": ["12345678"],
+                    "status": "not_found",
+                }
+                for index in range(1, verifier_module.MAX_AUTO_REVISED_CLAIMS + 2)
+            ],
+        }
+
+        replacements, revision = verifier_module.create_claim_revisions(
+            review,
+            [{"pmid": "12345678", "abstract": "A retrieved abstract."}],
+            client,
+        )
+
+        self.assertEqual(replacements, {})
+        self.assertEqual(revision["status"], "limit_reached")
+        self.assertEqual(revision["revision_limit"], 10)
+        self.assertEqual(client.messages.create.call_count, 0)
 
     def test_checker_failure_is_returned_as_visible_unavailable_state(self):
         client = Mock()

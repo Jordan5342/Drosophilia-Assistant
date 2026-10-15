@@ -10,7 +10,7 @@ load_dotenv()
 
 from drosophila_assistant import DrosophilaAssistant
 from agents.pipeline import AgentPipeline, build_pipeline_proposal
-from evidence_verifier import verify_claims
+from evidence_verifier import verify_and_revise_claims
 import database
 
 DEBUG_AGENTS = os.environ.get("DEBUG_AGENTS", "false").lower() == "true"
@@ -116,6 +116,7 @@ def chat():
         session_id = data.get('session_id', 'default')
         force_planning = data.get('force_planning', False)  # from "Plan Research" button
         client_awaiting = data.get('awaiting_clarification', False)  # client-side state
+        auto_revise_claims = data.get('auto_revise_claims') is not False
 
         if not user_message:
             return jsonify({'error': 'No message provided'}), 400
@@ -136,7 +137,11 @@ def chat():
             pass
 
         try:
-            result = session_assistant.chat(user_message, force_planning=force_planning)
+            result = session_assistant.chat(
+                user_message,
+                force_planning=force_planning,
+                auto_revise_claims=auto_revise_claims,
+            )
 
             try:
                 signal.alarm(0)
@@ -381,6 +386,7 @@ def agent_pipeline():
         data = request.get_json()
         query = data.get('query', '').strip()
         session_id = data.get('session_id', 'default')
+        auto_revise_claims = data.get('auto_revise_claims') is not False
 
         if not query:
             return jsonify({'error': 'No query provided'}), 400
@@ -421,16 +427,20 @@ def agent_pipeline():
                             topic, literature, hypothesis, critic
                         )
                         papers = literature.get('key_papers', [])
-                        proposal['evidence_review'] = verify_claims(
-                            json.dumps({
-                                key: value
-                                for key, value in proposal.items()
-                                if key not in {'references', 'evidence_review', 'evidence_claims'}
-                            }, ensure_ascii=False),
+                        review_text = json.dumps({
+                            key: value
+                            for key, value in proposal.items()
+                            if key not in {'references', 'evidence_review', 'evidence_claims'}
+                        }, ensure_ascii=False)
+                        proposal, evidence_review = verify_and_revise_claims(
+                            review_text,
                             papers,
                             session_assistant.client,
                             structured_claims=proposal.get('evidence_claims'),
+                            content=proposal,
+                            auto_revise=auto_revise_claims,
                         )
+                        proposal['evidence_review'] = evidence_review
                         session_assistant.planner.current_proposal = proposal
                         session_assistant.planner.set_context_from_chat(
                             topic, genes, papers, query

@@ -9,7 +9,7 @@ import re
 from evidence_verifier import (
     format_evidence_review,
     parse_structured_chat_response,
-    verify_claims,
+    verify_and_revise_claims,
 )
 from research_planner import (
     ResearchPlanner,
@@ -526,7 +526,12 @@ class DrosophilaAssistant:
         print(f"  ✅ Papers after relevance filter: {len(filtered)}/{len(all_papers)}")
         return filtered[:15]  # cap at 15 to avoid token overflow
 
-    def handle_planning_request(self, user_message: str, force: bool = False) -> Dict:
+    def handle_planning_request(
+        self,
+        user_message: str,
+        force: bool = False,
+        auto_revise_claims: bool = True,
+    ) -> Dict:
         """
         Handle a research planning request. Returns a dict with:
         - type: 'clarification' | 'proposal' | 'refinement'
@@ -541,7 +546,8 @@ class DrosophilaAssistant:
             print("  ↻ Refining existing proposal...")
             updated, summary = self.planner.refine_proposal(
                 user_message,
-                self.conversation_history
+                self.conversation_history,
+                auto_revise_claims=auto_revise_claims,
             )
             formatted = self.planner.format_proposal_for_chat(updated)
             return {
@@ -684,7 +690,8 @@ class DrosophilaAssistant:
                 genes=genes,
                 papers=proposal_papers,
                 user_clarifications=stored_clarifications,
-                conversation_history=self.conversation_history
+                conversation_history=self.conversation_history,
+                auto_revise_claims=auto_revise_claims,
             )
             formatted = self.planner.format_proposal_for_chat(proposal)
             return {
@@ -707,7 +714,8 @@ class DrosophilaAssistant:
             self.planner.set_context_from_chat(topic, genes, proposal_papers)
             proposal = self.planner.generate_proposal(
                 topic=topic, genes=genes, papers=proposal_papers,
-                conversation_history=self.conversation_history
+                conversation_history=self.conversation_history,
+                auto_revise_claims=auto_revise_claims,
             )
             formatted = self.planner.format_proposal_for_chat(proposal)
             return {
@@ -726,7 +734,12 @@ class DrosophilaAssistant:
             'ready_for_export': False
         }
 
-    def chat(self, user_message: str, force_planning: bool = False) -> Dict:
+    def chat(
+        self,
+        user_message: str,
+        force_planning: bool = False,
+        auto_revise_claims: bool = True,
+    ) -> Dict:
         """
         Main chat function. Returns dict with:
         - response: text to display
@@ -799,7 +812,11 @@ class DrosophilaAssistant:
 
         if force_planning or is_planning or is_clarification_answer:
             self.planning_mode = True
-            result = self.handle_planning_request(user_message, force=force_planning)
+            result = self.handle_planning_request(
+                user_message,
+                force=force_planning,
+                auto_revise_claims=auto_revise_claims,
+            )
 
             # Add to history
             self.conversation_history.append({"role": "user", "content": user_message})
@@ -908,12 +925,18 @@ At the end of responses, if the topic could support a research proposal, add a b
         assistant_message, structured_claims = parse_structured_chat_response(
             assistant_message
         )
-        evidence_review = verify_claims(
+        response_content, evidence_review = verify_and_revise_claims(
             assistant_message,
             all_papers,
             self.client,
             structured_claims=structured_claims,
+            content={
+                "answer": assistant_message,
+                "evidence_claims": structured_claims or [],
+            },
+            auto_revise=auto_revise_claims,
         )
+        assistant_message = response_content["answer"]
         assistant_message = validate_answer_citations(assistant_message, all_papers)
         assistant_message += "\n\n" + format_evidence_review(evidence_review)
         self.conversation_history.append({"role": "assistant", "content": assistant_message})

@@ -187,6 +187,22 @@
 
         .header-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 
+        .auto-revision-toggle {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            padding: 7px 10px;
+            border: 1px solid rgba(255,255,255,0.45);
+            border-radius: 8px;
+            background: rgba(255,255,255,0.12);
+            color: white;
+            font-size: 12px;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+
+        .auto-revision-toggle input { accent-color: #2E5FA3; }
+
         .status-badge {
             display: inline-flex;
             align-items: center;
@@ -942,6 +958,10 @@
                 <button class="btn-pipeline" id="pipelineBtn" onclick="runAgentPipeline()" title="Run the Literature → Hypothesis → Critic multi-agent pipeline">
                     🤖 Run AI Pipeline
                 </button>
+                <label class="auto-revision-toggle" title="When enabled, unsupported or uncertain factual claims get one cautious revision pass and are checked again.">
+                    <input type="checkbox" id="autoRevisionToggle" checked>
+                    <span>Auto-revise claims</span>
+                </label>
                 <button class="btn" onclick="exportConversation()">💾 Export Chat</button>
             </div>
         </div>
@@ -1054,6 +1074,18 @@
         if (!id) { id = 'session_' + Date.now(); localStorage.setItem(key, id); }
         return id;
     })();
+    const autoRevisionPreferenceKey = 'fly-design-auto-revise-claims';
+    const autoRevisionToggle = document.getElementById('autoRevisionToggle');
+    const storedAutoRevisionPreference = localStorage.getItem(autoRevisionPreferenceKey);
+    if (storedAutoRevisionPreference !== null) {
+        autoRevisionToggle.checked = storedAutoRevisionPreference === 'true';
+    }
+    autoRevisionToggle.addEventListener('change', () => {
+        localStorage.setItem(autoRevisionPreferenceKey, String(autoRevisionToggle.checked));
+    });
+    function autoRevisionEnabled() {
+        return autoRevisionToggle.checked;
+    }
     let isTyping = false;
     let inPlanningMode = false;
     let proposalReady = false;
@@ -1121,7 +1153,8 @@
                     message,
                     session_id: sessionId,
                     force_planning: forcePlanning,
-                    awaiting_clarification: awaitingClarification
+                    awaiting_clarification: awaitingClarification,
+                    auto_revise_claims: autoRevisionEnabled()
                 })
             });
             const data = await res.json();
@@ -1896,7 +1929,11 @@
             const response = await fetch(`${API_URL}/agent_pipeline`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ query, session_id: sessionId })
+                body: JSON.stringify({
+                    query,
+                    session_id: sessionId,
+                    auto_revise_claims: autoRevisionEnabled()
+                })
             });
             if (!response.ok) {
                 let message = 'Pipeline request failed with HTTP ' + response.status;

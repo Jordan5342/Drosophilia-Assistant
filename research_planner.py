@@ -2,7 +2,7 @@ import anthropic
 import json
 import re
 from typing import Any, Optional, Dict, List, Set, Tuple
-from evidence_verifier import format_evidence_review, verify_claims
+from evidence_verifier import format_evidence_review, verify_and_revise_claims
 
 # Intent keywords that trigger research planning mode (conservative)
 PLANNING_INTENT_STRONG = [
@@ -314,7 +314,8 @@ Otherwise ask 2-3 focused questions in a friendly paragraph under 100 words."""
         genes: List[str],
         papers: List[Dict],
         user_clarifications: str = "",
-        conversation_history: List[Dict] = None
+        conversation_history: List[Dict] = None,
+        auto_revise_claims: bool = True,
     ) -> Dict:
         """
         Generate a full structured research proposal.
@@ -479,23 +480,28 @@ REQUIREMENTS:
         proposal["evidence_status"] = (
             "retrieved_literature" if papers else "no_retrieved_literature"
         )
-        proposal["evidence_review"] = verify_claims(
-            json.dumps({
-                key: value
-                for key, value in proposal.items()
-                if key not in {"references", "evidence_review", "evidence_claims"}
-            }, ensure_ascii=False),
+        review_text = json.dumps({
+            key: value
+            for key, value in proposal.items()
+            if key not in {"references", "evidence_review", "evidence_claims"}
+        }, ensure_ascii=False)
+        proposal, evidence_review = verify_and_revise_claims(
+            review_text,
             papers[:10],
             self.client,
             structured_claims=proposal.get("evidence_claims"),
+            content=proposal,
+            auto_revise=auto_revise_claims,
         )
+        proposal["evidence_review"] = evidence_review
         self.current_proposal = proposal
         return proposal
 
     def refine_proposal(
         self,
         refinement_request: str,
-        conversation_history: List[Dict]
+        conversation_history: List[Dict],
+        auto_revise_claims: bool = True,
     ) -> Tuple[Dict, str]:
         """
         Refine the current proposal based on user feedback.
@@ -538,6 +544,20 @@ Update the proposal accordingly and return the updated version with a changes su
             updated = result.get('updated_proposal', self.current_proposal)
             summary = result.get('changes_summary', 'Proposal updated.')
             updated["references"] = self.current_proposal.get("references", [])
+            review_text = json.dumps({
+                key: value
+                for key, value in updated.items()
+                if key not in {"references", "evidence_review", "evidence_claims"}
+            }, ensure_ascii=False)
+            updated, evidence_review = verify_and_revise_claims(
+                review_text,
+                self.proposal_context.get("papers", []),
+                self.client,
+                structured_claims=updated.get("evidence_claims"),
+                content=updated,
+                auto_revise=auto_revise_claims,
+            )
+            updated["evidence_review"] = evidence_review
             self.current_proposal = updated
             return updated, summary
         except Exception as e:
