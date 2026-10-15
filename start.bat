@@ -10,7 +10,7 @@ REM Check if Python is installed
 python --version >nul 2>&1
 if errorlevel 1 (
     echo [ERROR] Python is not installed or not in PATH
-    echo Please install Python 3.8 or higher from python.org
+    echo Please install Python 3.11 from python.org
     pause
     exit /b 1
 )
@@ -50,11 +50,7 @@ if not exist "venv\.installed" (
 )
 
 REM Check for API key
-if "%ANTHROPIC_API_KEY%"=="" (
-    if exist ".env" (
-        echo [OK] Loading API key from .env file...
-        for /f "tokens=1,2 delims==" %%a in (.env) do set %%a=%%b
-    ) else (
+if "%ANTHROPIC_API_KEY%"=="" if not exist ".env" (
         echo.
         echo [WARNING] ANTHROPIC_API_KEY not found!
         echo.
@@ -79,10 +75,9 @@ if "%ANTHROPIC_API_KEY%"=="" (
         set ANTHROPIC_API_KEY=%api_key%
         echo ANTHROPIC_API_KEY=%api_key% > .env
         echo [OK] API key saved to .env file
-    )
 )
 
-echo [OK] API key configured
+echo [OK] Configuration check complete
 echo.
 echo ================================================
 echo  Starting Fly Design

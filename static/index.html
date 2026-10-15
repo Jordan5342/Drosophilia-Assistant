@@ -871,6 +871,10 @@
         .proposal-panel-body tr:nth-child(even) td { background: #f8faf8; }
         .checkpoint-block { background: #f2f8f4; border-left-color: #6ca68b; }
         .debug-panel.open { width: min(420px, 38vw); }
+        :focus-visible {
+            outline: 3px solid #d08b2c;
+            outline-offset: 3px;
+        }
 
         @media (max-width: 900px) {
             .header { align-items: flex-start; gap: 14px; flex-direction: column; }
@@ -904,13 +908,22 @@
             .proposal-panel-header h2 { font-size: 14px; }
             .proposal-panel-header .panel-actions { gap: 5px; }
         }
+
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after {
+                scroll-behavior: auto !important;
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: 0.01ms !important;
+            }
+        }
     </style>
 </head>
 <body>
 <div class="app-wrapper">
 
     <!-- ── Main chat panel ── -->
-    <div class="chat-panel">
+    <main class="chat-panel">
         <div class="header">
             <div class="header-left">
                 <div class="logo">🪰</div>
@@ -920,8 +933,8 @@
                 </div>
             </div>
             <div class="header-actions">
-                <span id="statusBadge" class="status-badge">
-                    <span class="dot"></span> Connected
+                <span id="statusBadge" class="status-badge" role="status" aria-live="polite">
+                    <span class="dot" aria-hidden="true"></span> Connected
                 </span>
                 <button class="btn-plan" id="planBtn" onclick="triggerPlanningMode()" title="Generate a research proposal from the current conversation">
                     🔬 Plan Research
@@ -933,7 +946,7 @@
             </div>
         </div>
 
-        <div class="messages" id="messages">
+        <div class="messages" id="messages" aria-live="polite" aria-relevant="additions">
             <div class="welcome-screen">
                 <div class="icon">🪰</div>
                 <h2>Design your next fly study.</h2>
@@ -943,22 +956,23 @@
 
         <div class="input-area">
             <div class="input-controls">
-                <button class="btn-icon" onclick="resetConversation()" title="Reset conversation">🔄</button>
+                <button class="btn-icon" onclick="resetConversation()" title="Reset conversation" aria-label="Reset conversation">🔄</button>
                 <div class="planning-mode-indicator" id="planningModeIndicator">
                     🔬 Research Planning Mode — refine your proposal in chat
                 </div>
             </div>
             <div class="input-wrapper">
                 <textarea id="messageInput"
+                    aria-label="Research question or message"
                     placeholder="Ask about genes, search papers, or explore Drosophila research..."
                     onkeydown="handleKeyPress(event)"></textarea>
                 <button class="btn-send" id="sendBtn" onclick="sendMessage()">🔍 Search</button>
             </div>
         </div>
-    </div>
+    </main>
 
     <!-- ── Proposal side panel ── -->
-    <div class="proposal-panel" id="proposalPanel">
+    <aside class="proposal-panel" id="proposalPanel" aria-labelledby="panelTitle">
         <div class="proposal-panel-header">
             <h2 id="panelTitle">📄 Research Proposal</h2>
             <div class="panel-actions">
@@ -980,7 +994,7 @@
                         >
                     🖨️ Print
                 </button>
-                <button class="btn-panel-close" onclick="closeProposalPanel()" title="Close">×</button>
+                <button class="btn-panel-close" onclick="closeProposalPanel()" title="Close" aria-label="Close proposal panel">×</button>
             </div>
         </div>
 
@@ -990,7 +1004,7 @@
             <div class="aim-buttons" id="aimButtons"></div>
         </div>
 
-        <div class="proposal-panel-body" id="proposalBody">
+        <div class="proposal-panel-body" id="proposalBody" aria-live="polite">
             <p style="color:#888; text-align:center; margin-top:60px;">
                 Your generated proposal will appear here.
             </p>
@@ -1001,15 +1015,15 @@
                 📥 Export Proposal as Word (.docx)
             </button>
         </div>
-    </div>
+    </aside>
 
     <!-- ── Agent pipeline debug panel ── -->
-    <div class="debug-panel" id="debugPanel">
+    <aside class="debug-panel" id="debugPanel" aria-label="Agent pipeline activity">
         <div class="debug-header">
             <span class="debug-title">🤖 Agent Pipeline</span>
-            <button class="btn-panel-close" onclick="closeDebugPanel()" title="Close">×</button>
+            <button class="btn-panel-close" onclick="closeDebugPanel()" title="Close" aria-label="Close pipeline activity">×</button>
         </div>
-        <div class="debug-body" id="debugBody">
+        <div class="debug-body" id="debugBody" aria-live="polite" aria-relevant="additions">
             <div class="debug-idle">Click "🤖 Run AI Pipeline" to start.<br><br>One focused pass through:<br>📚 Literature → 🧪 Hypothesis → ⚖️ Critic<br><br>The critic’s notes are included with the proposal; the pipeline does not retry automatically.</div>
         </div>
     </div>
@@ -1017,11 +1031,11 @@
 </div>
 
 <!-- Export chat modal -->
-<div class="modal" id="exportModal">
+<div class="modal" id="exportModal" role="dialog" aria-modal="true" aria-labelledby="exportModalTitle">
     <div class="modal-content">
         <div class="modal-header">
-            <h2>Export Conversation</h2>
-            <button class="modal-close" onclick="closeModal('exportModal')">×</button>
+            <h2 id="exportModalTitle">Export Conversation</h2>
+            <button class="modal-close" onclick="closeModal('exportModal')" aria-label="Close export dialog">×</button>
         </div>
         <div class="modal-body">
             <textarea id="exportText" readonly></textarea>
@@ -1051,10 +1065,14 @@
         try {
             const res = await fetch(`${API_URL}/health`);
             const data = await res.json();
-            document.getElementById('statusBadge').innerHTML = data.api_configured
-                ? '<span class="dot"></span> Connected'
-                : '<span class="dot"></span> API Missing';
-        } catch {}
+            const status = data.api_configured
+                ? data.critic_configured ? 'Connected' : 'Chat ready · Critic key missing'
+                : 'API Missing';
+            document.getElementById('statusBadge').innerHTML =
+                `<span class="dot" aria-hidden="true"></span> ${status}`;
+        } catch {
+            document.getElementById('statusBadge').textContent = 'Unavailable';
+        }
     }
 
     // ── Planning mode trigger (button) ───────────────────────────────────────
@@ -1484,7 +1502,7 @@
 
         // Markdown links [text](url)
         html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g,
-            '<a href="$2" target="_blank">$1</a>');
+            '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
 
         // Bullet points
         html = html.replace(/^[-•] (.+)$/gm, '<li>$1</li>');
@@ -1555,7 +1573,7 @@
 
         // Markdown links
         text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g,
-            '<a href="$2" target="_blank" style="color:var(--accent);text-decoration:underline;font-weight:500;">$1</a>');
+            '<a href="$2" target="_blank" rel="noopener noreferrer" style="color:var(--accent);text-decoration:underline;font-weight:500;">$1</a>');
 
         // Bold
         text = text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
@@ -1567,7 +1585,7 @@
 
         // Plain URLs
         text = text.replace(/(?<!href="|">)(https?:\/\/[^\s<]+)(?!<\/a>)/g,
-            '<a href="$1" target="_blank" style="color:var(--accent);text-decoration:underline;">$1</a>');
+            '<a href="$1" target="_blank" rel="noopener noreferrer" style="color:var(--accent);text-decoration:underline;">$1</a>');
 
         return text;
     }
@@ -1751,6 +1769,7 @@
     }
 
     // ── Export chat ──────────────────────────────────────────────────────────
+    let modalReturnFocus = null;
     async function exportConversation() {
         try {
             const res = await fetch(`${API_URL}/export`, {
@@ -1761,7 +1780,9 @@
             const data = await res.json();
             if (data.error) { alert(data.error); return; }
             document.getElementById('exportText').value = data.markdown;
+            modalReturnFocus = document.activeElement;
             document.getElementById('exportModal').classList.add('active');
+            document.getElementById('exportText').focus();
         } catch {}
     }
 
@@ -1781,7 +1802,10 @@
         alert('Copied!');
     }
 
-    function closeModal(id) { document.getElementById(id).classList.remove('active'); }
+    function closeModal(id) {
+        document.getElementById(id).classList.remove('active');
+        if (modalReturnFocus instanceof HTMLElement) modalReturnFocus.focus();
+    }
 
     function handleKeyPress(e) {
         if (e.key === 'Enter' && !e.shiftKey) {
@@ -1791,14 +1815,20 @@
     }
 
     window.onclick = (e) => {
-        if (e.target.classList.contains('modal')) e.target.classList.remove('active');
+        if (e.target.classList.contains('modal')) closeModal(e.target.id);
     };
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && document.getElementById('exportModal').classList.contains('active')) {
+            closeModal('exportModal');
+        }
+    });
 
     // ── Agent pipeline ───────────────────────────────────────────────────────
     let pipelineRunning = false;
     let pipelineTypingId = null;
 
-    function runAgentPipeline() {
+    async function runAgentPipeline() {
         const input = document.getElementById('messageInput');
         const query = input.value.trim();
 
@@ -1825,54 +1855,78 @@
         appendDebugLine('info', 'Query: "' + query + '"');
         appendDebugLine('info', 'Starting Literature → Hypothesis → Critic pipeline...');
 
-        fetch(`${API_URL}/agent_pipeline`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query, session_id: sessionId })
-        }).then(response => {
-            if (!response.ok) {
-                return response.json().then(e => { throw new Error(e.error || 'Pipeline request failed'); });
+        let terminalEventReceived = false;
+        let buffer = '';
+        const processFrames = (chunk, flush = false) => {
+            buffer += chunk;
+            const frames = buffer.split(/\r?\n\r?\n/);
+            buffer = frames.pop() || '';
+            if (flush && buffer.trim()) {
+                frames.push(buffer);
+                buffer = '';
             }
+
+            for (const frame of frames) {
+                let eventType = 'message';
+                const dataLines = [];
+                for (const line of frame.split(/\r?\n/)) {
+                    if (line.startsWith('event: ')) eventType = line.slice(7).trim();
+                    if (line.startsWith('data: ')) dataLines.push(line.slice(6));
+                }
+                if (!dataLines.length) continue;
+                try {
+                    handlePipelineEvent(eventType, JSON.parse(dataLines.join('\n')));
+                    if (eventType === 'pipeline_complete' || eventType === 'error') {
+                        terminalEventReceived = true;
+                    }
+                } catch (err) {
+                    console.error('SSE event error:', err, frame);
+                    appendDebugLine('error', 'Could not read a pipeline update: ' + err.message);
+                }
+            }
+        };
+
+        try {
+            const response = await fetch(`${API_URL}/agent_pipeline`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ query, session_id: sessionId })
+            });
+            if (!response.ok) {
+                let message = 'Pipeline request failed with HTTP ' + response.status;
+                try {
+                    const body = await response.json();
+                    message = body.error || message;
+                } catch {}
+                throw new Error(message);
+            }
+            if (!response.body) throw new Error('Pipeline response did not include an event stream.');
+
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
-            let buffer = '';
-            let currentEventType = '';
-
-            function read({ done, value }) {
+            while (true) {
+                const { done, value } = await reader.read();
                 if (done) {
-                    pipelineRunning = false;
-                    btn.disabled = false;
-                    btn.classList.remove('running');
-                    if (pipelineTypingId) { removeTypingIndicator(pipelineTypingId); pipelineTypingId = null; }
-                    return;
+                    processFrames(decoder.decode(), true);
+                    break;
                 }
-                buffer += decoder.decode(value, { stream: true });
-                const lines = buffer.split('\n');
-                buffer = lines.pop();
-
-                for (const line of lines) {
-                    if (line.startsWith('event: ')) {
-                        currentEventType = line.slice(7).trim();
-                    } else if (line.startsWith('data: ')) {
-                        try {
-                            const data = JSON.parse(line.slice(6));
-                            handlePipelineEvent(currentEventType, data);
-                        } catch (e) {
-                            console.error('SSE parse error:', e, line);
-                        }
-                    }
-                }
-                reader.read().then(read);
+                processFrames(decoder.decode(value, { stream: true }));
             }
-            reader.read().then(read);
-        }).catch(err => {
+            if (!terminalEventReceived) {
+                const message = 'Pipeline stream ended before a completion event was received.';
+                appendDebugLine('error', message);
+                addMessage('❌ ' + message, 'assistant');
+            }
+        } catch (err) {
+            if (pipelineTypingId) { removeTypingIndicator(pipelineTypingId); pipelineTypingId = null; }
+            appendDebugLine('error', 'Pipeline error: ' + err.message);
+            addMessage('❌ Pipeline error: ' + err.message, 'assistant');
+        } finally {
             pipelineRunning = false;
             btn.disabled = false;
             btn.classList.remove('running');
             if (pipelineTypingId) { removeTypingIndicator(pipelineTypingId); pipelineTypingId = null; }
-            appendDebugLine('error', 'Pipeline error: ' + err.message);
-            addMessage('❌ Pipeline error: ' + err.message, 'assistant');
-        });
+        }
     }
 
     function handlePipelineEvent(type, data) {
@@ -1892,12 +1946,18 @@
                 break;
 
             case 'agent_complete': {
-                if (data.verdict !== undefined) {
-                    // Critic complete
-                    const pass = data.verdict === 'pass';
+                if (data.status === 'error') {
+                    appendDebugLine('error', (data.agent || 'Agent') + ' failed: ' + (data.error || 'Unknown error'));
+                }
+                if (data.agent === 'critic') {
+                    const hasVerdict = data.verdict === 'pass' || data.verdict === 'fail';
                     const scores = data.scores || {};
                     const scoreStr = Object.entries(scores).map(([k,v]) => k + ':' + v).join(' | ');
-                    appendDebugLine(pass ? 'pass' : 'fail', 'Verdict: ' + data.verdict.toUpperCase() + ' — ' + scoreStr);
+                    appendDebugLine(
+                        data.status === 'error' ? 'error' : data.verdict === 'pass' ? 'pass' : 'info',
+                        (hasVerdict ? 'Verdict: ' + data.verdict.toUpperCase() : 'Descriptive scores') +
+                            (scoreStr ? ' — ' + scoreStr : '')
+                    );
                 } else if (data.agent === 'literature') {
                     appendDebugLine('ok', 'Retrieved ' + (data.paper_count || 0) + ' papers');
                 }
@@ -1913,18 +1973,10 @@
                 break;
             }
             case 'pipeline_complete':
-                if (pipelineTypingId) { removeTypingIndicator(pipelineTypingId); pipelineTypingId = null; }
-                pipelineRunning = false;
-                document.getElementById('pipelineBtn').disabled = false;
-                document.getElementById('pipelineBtn').classList.remove('running');
                 handlePipelineComplete(data);
                 break;
 
             case 'error':
-                if (pipelineTypingId) { removeTypingIndicator(pipelineTypingId); pipelineTypingId = null; }
-                pipelineRunning = false;
-                document.getElementById('pipelineBtn').disabled = false;
-                document.getElementById('pipelineBtn').classList.remove('running');
                 appendDebugLine('error', 'Error: ' + data.message);
                 addMessage('❌ Pipeline error: ' + data.message, 'assistant');
                 break;
@@ -1937,18 +1989,28 @@
         const hyp    = data.final_hypothesis || {};
         const critic = data.final_critic || {};
 
-        appendDebugSection('Pipeline Complete', passed ? '#34d399' : '#fbbf24');
+        appendDebugSection('Pipeline Complete', passed === true ? '#34d399' : passed === false ? '#fbbf24' : '#60a5fa');
         appendDebugLine(
-            passed ? 'pass' : 'warn',
-            passed
-                ? '✅ Proposal approved (score ' + score + '/30)'
-                : '⚠ Review complete — see critic feedback (score ' + score + '/30)'
+            passed === true ? 'pass' : passed === false ? 'warn' : 'info',
+            passed === true
+                ? '✅ Proposal approved (score ' + score + '/15)'
+                : passed === false
+                    ? '⚠ Review complete — see critic feedback (score ' + score + '/15)'
+                    : 'Review complete — scores are descriptive; no pass/fail verdict was provided.'
         );
+        if (data.failed_agents?.length) {
+            appendDebugLine('error', 'Incomplete results: ' + data.failed_agents.join(', ') + ' agent(s) failed.');
+        }
 
         // Build chat message
-        let msg = passed
-            ? '✅ **Fly Design review complete — proposal approved** (score ' + score + '/30)\n\n'
-            : '⚠️ **Fly Design review complete — critic feedback included** (score ' + score + '/30)\n\n';
+        let msg = passed === true
+            ? '✅ **Fly Design review complete — proposal approved** (score ' + score + '/15)\n\n'
+            : passed === false
+                ? '⚠️ **Fly Design review complete — critic feedback included** (score ' + score + '/15)\n\n'
+                : 'ℹ️ **Fly Design review complete** — critic scores are descriptive; no pass/fail verdict was provided.\n\n';
+        if (data.failed_agents?.length) {
+            msg += '**Agent failures:** ' + data.failed_agents.join(', ') + '. Results may be incomplete.\n\n';
+        }
 
         if (hyp.hypothesis)            msg += '**Hypothesis:**\n' + hyp.hypothesis + '\n\n';
         if (hyp.experimental_approach) msg += '**Experimental Approach:**\n' + hyp.experimental_approach + '\n\n';
@@ -1960,9 +2022,17 @@
             msg += '**Fly Lines Needed:**\n' +
                 hyp.fly_lines_needed.map(l => '- `' + l.line + '` — ' + l.purpose + (l.source ? ' (' + l.source + ')' : '')).join('\n') + '\n\n';
         }
+        const keyPapers = data.final_literature?.key_papers || [];
+        if (keyPapers.length) {
+            msg += '**Key Literature:**\n' + keyPapers.map((paper, index) => {
+                const citation = `${paper.authors || 'Unknown'} (${paper.year || 'N/A'}). ${paper.title || 'No title'}.`;
+                const url = paper.url || (paper.pmid ? `https://pubmed.ncbi.nlm.nih.gov/${paper.pmid}/` : '');
+                return url ? `[${index + 1}] ${citation} [View source](${url})` : `[${index + 1}] ${citation}`;
+            }).join('\n') + '\n\n';
+        }
         const scores = critic.scores || {};
         if (Object.keys(scores).length) {
-            msg += '**Critic Scores:** ' + Object.entries(scores).map(([k,v]) => k + ': ' + v + '/10').join(' · ') + '\n';
+            msg += '**Critic Scores:** ' + Object.entries(scores).map(([k,v]) => k + ': ' + v + '/5').join(' · ') + '\n';
         }
         if (critic.reasoning) msg += '\n*' + critic.reasoning + '*';
         if (!passed && critic.issues?.length) {

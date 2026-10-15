@@ -1,9 +1,39 @@
+import os
 from typing import Dict, Generator, List, Optional
 from agents.literature_agent import LiteratureAgent
 from agents.hypothesis_agent import HypothesisAgent
-from agents.gemini_critic_agent import CriticAgent
+from agents.gemini_critic_agent import GeminiCriticAgent
 
 MAX_ITERATIONS = 1
+
+
+def _verified_key_papers(reported_papers: List[Dict], retrieved_papers: List[Dict]) -> List[Dict]:
+    """Keep only cited papers that match metadata from the literature retrieval."""
+    by_pmid = {
+        str(paper["pmid"]): paper
+        for paper in retrieved_papers
+        if paper.get("pmid")
+    }
+    by_title = {
+        " ".join(str(paper.get("title", "")).casefold().split()): paper
+        for paper in retrieved_papers
+        if paper.get("title")
+    }
+
+    verified = []
+    for reported in reported_papers or []:
+        pmid = str(reported.get("pmid", ""))
+        title = " ".join(str(reported.get("title", "")).casefold().split())
+        source = by_pmid.get(pmid) if pmid else None
+        source = source or (by_title.get(title) if title else None)
+        if not source:
+            continue
+
+        citation = dict(source)
+        if reported.get("relevance"):
+            citation["relevance"] = reported["relevance"]
+        verified.append(citation)
+    return verified
 
 
 class AgentPipeline:
@@ -15,7 +45,7 @@ class AgentPipeline:
         """
         self.lit_agent = LiteratureAgent(client)
         self.hyp_agent = HypothesisAgent(client)
-        self.critic = CriticAgent(client)
+        self.critic = GeminiCriticAgent(api_key=os.environ.get("GEMINI_API_KEY"))
         self.fetch_literature = fetch_literature_fn
 
     def run_streaming(
@@ -55,6 +85,10 @@ class AgentPipeline:
                         user_clarifications=query
                     )
                     lit_output = self.lit_agent.run(topic, cached_papers, critic_feedback)
+                    lit_output["key_papers"] = _verified_key_papers(
+                        lit_output.get("key_papers", []),
+                        cached_papers or []
+                    )
                     cached_lit_output = lit_output
                 except Exception as exc:
                     print(f"  [Pipeline pass {iteration}] Literature Agent error: {exc}")
@@ -65,7 +99,7 @@ class AgentPipeline:
                         "human_orthologs": [],
                         "disease_context": "",
                         "key_papers": [],
-                        "identified_gaps": ["Literature retrieval failed"],
+                        "identified_gaps": ["The literature step failed"],
                         "summary": f"Error: {exc}"
                     }
                     cached_lit_output = lit_output
@@ -73,6 +107,8 @@ class AgentPipeline:
                 yield {"type": "agent_complete", "data": {
                     "agent": "literature",
                     "iteration": iteration,
+                    "status": "error" if lit_output.get("_error") else "complete",
+                    "error": lit_output.get("_error"),
                     "output": lit_output if debug else _lit_summary(lit_output),
                     "paper_count": len(cached_papers) if cached_papers else 0
                 }}
@@ -112,6 +148,8 @@ class AgentPipeline:
             yield {"type": "agent_complete", "data": {
                 "agent": "hypothesis",
                 "iteration": iteration,
+                "status": "error" if hyp_output.get("_error") else "complete",
+                "error": hyp_output.get("_error"),
                 "output": hyp_output if debug else _hyp_summary(hyp_output)
             }}
 
@@ -128,19 +166,19 @@ class AgentPipeline:
                 print(f"  [Pipeline pass {iteration}] Critic Agent error: {exc}")
                 critic_output = {
                     "_error": str(exc),
-                    "verdict": "fail",
-                    "scores": {"novelty": 5, "relevance": 5, "feasibility": 5},
+                    "scores": {},
                     "issues": [f"Critic error: {exc}"],
                     "suggestions": [],
-                    "send_back_to": "hypothesis",
                     "reasoning": f"Critic agent encountered an error: {exc}"
                 }
 
             yield {"type": "agent_complete", "data": {
                 "agent": "critic",
                 "iteration": iteration,
+                "status": "error" if critic_output.get("_error") else "complete",
+                "error": critic_output.get("_error"),
                 "output": critic_output,
-                "verdict": critic_output.get("verdict", "fail"),
+                "verdict": critic_output.get("verdict"),
                 "scores": critic_output.get("scores", {})
             }}
 
@@ -166,7 +204,7 @@ class AgentPipeline:
                     "score": total_score
                 }
 
-            verdict = critic_output.get("verdict", "fail")
+            verdict = critic_output.get("verdict")
             send_back_next = critic_output.get("send_back_to")
 
             # ── Routing decision ──────────────────────────────────────────────
@@ -192,31 +230,55 @@ class AgentPipeline:
             else:
                 yield {"type": "routing", "data": {
                     "iteration": iteration,
-                    "verdict": "fail",
+                    "verdict": verdict,
                     "send_back_to": None,
-                    "message": (
-                        "Single-pass review complete. Surfacing the proposal "
-                        f"with critic feedback (score {best_score}/30)"
-                    )
+                    "message": _review_message(verdict, best_score)
                 }}
 
         # ── Final result ──────────────────────────────────────────────────────
         final = best_result or {
             "literature": cached_lit_output or {},
             "hypothesis": {},
-            "critic": {"verdict": "fail", "scores": {}, "issues": [], "suggestions": [], "reasoning": ""},
+            "critic": {"scores": {}, "issues": [], "suggestions": [], "reasoning": ""},
             "score": 0
         }
+
+        failed_agents = [
+            agent
+            for agent, output in (
+                ("literature", final["literature"]),
+                ("hypothesis", final["hypothesis"]),
+                ("critic", final["critic"])
+            )
+            if output.get("_error")
+        ]
+        critic_verdict = final["critic"].get("verdict")
+        passed = None
+        if critic_verdict in ("pass", "fail"):
+            passed = critic_verdict == "pass" and not failed_agents
 
         yield {"type": "pipeline_complete", "data": {
             "final_literature": final["literature"],
             "final_hypothesis": final["hypothesis"],
             "final_critic": final["critic"],
-            "passed": final["critic"].get("verdict") == "pass",
+            "passed": passed,
+            "status": "partial" if failed_agents else "complete",
+            "failed_agents": failed_agents,
             "best_score": final.get("score", 0),
             "total_iterations": len(history),
             "iterations": history if debug else []
         }}
+
+
+def _review_message(verdict: Optional[str], score: int) -> str:
+    if verdict == "pass":
+        return f"Proposal approved — pipeline complete (score {score}/15)"
+    if verdict == "fail":
+        return f"Single-pass review complete; see critic feedback (score {score}/15)"
+    return (
+        "Single-pass review complete. Critic scores are descriptive; "
+        "no pass/fail verdict was provided."
+    )
 
 
 # ── Non-debug summary helpers ─────────────────────────────────────────────────
@@ -225,8 +287,10 @@ def _lit_summary(output: Dict) -> Dict:
     return {
         "genes": output.get("genes", []),
         "paper_count": len(output.get("key_papers", [])),
+        "key_papers": output.get("key_papers", []),
         "identified_gaps": output.get("identified_gaps", []),
-        "summary": output.get("summary", "")
+        "summary": output.get("summary", ""),
+        "_error": output.get("_error")
     }
 
 
@@ -234,5 +298,6 @@ def _hyp_summary(output: Dict) -> Dict:
     return {
         "hypothesis": output.get("hypothesis", ""),
         "novelty_claim": output.get("novelty_claim", ""),
-        "aims_count": len(output.get("specific_aims", []))
+        "aims_count": len(output.get("specific_aims", [])),
+        "_error": output.get("_error")
     }

@@ -1,6 +1,7 @@
 import anthropic
+import json
 import re
-from typing import Optional, Dict, List, Tuple
+from typing import Any, Optional, Dict, List, Set, Tuple
 
 # Intent keywords that trigger research planning mode (conservative)
 PLANNING_INTENT_STRONG = [
@@ -76,6 +77,65 @@ def detect_planning_intent(message: str, has_prior_context: bool = False) -> Tup
                 return True, 'contextual'
 
     return False, ''
+
+
+def _canonical_references(
+    papers: List[Dict],
+    citation_numbers: Optional[Set[int]] = None
+) -> List[Dict]:
+    """Build a numbered bibliography from retrieved records, not model output."""
+    references = []
+    for number, paper in enumerate(papers, 1):
+        if citation_numbers is not None and number not in citation_numbers:
+            continue
+        pmid = str(paper.get("pmid", "")).strip()
+        title = paper.get("title") or "No title"
+        authors = paper.get("authors") or "Unknown"
+        year = paper.get("year") or "N/A"
+        citation = f"{authors} ({year}). {title}."
+        if pmid:
+            citation += f" PMID: {pmid}."
+
+        url = paper.get("url") or (
+            f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/" if pmid.isdigit() else ""
+        )
+        references.append({
+            "number": number,
+            "citation": citation,
+            "url": url,
+            "pmid": pmid or None
+        })
+    return references
+
+
+def _proposal_citation_numbers(proposal: Dict) -> Set[int]:
+    numbers = set()
+    for reference in proposal.get("references", []) or []:
+        try:
+            numbers.add(int(reference["number"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+
+    for text in re.findall(r'"(?:[^"\\]|\\.)*"', json.dumps(proposal)):
+        numbers.update(int(number) for number in re.findall(r"\[(\d+)\]", text))
+    return numbers
+
+
+def _remove_unverified_citation_markers(value: Any, valid_numbers: Set[int]) -> Any:
+    if isinstance(value, str):
+        return re.sub(
+            r"\[(\d+)\]",
+            lambda match: match.group(0) if int(match.group(1)) in valid_numbers else "",
+            value
+        )
+    if isinstance(value, list):
+        return [_remove_unverified_citation_markers(item, valid_numbers) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: _remove_unverified_citation_markers(item, valid_numbers)
+            for key, item in value.items()
+        }
+    return value
 
 
 class ResearchPlanner:
@@ -228,8 +288,8 @@ IMPORTANT: The literature provided is thin (fewer than 3 papers). This means:
 Generate a complete research proposal in JSON format. The proposal must be specific and grounded — not generic.
 
 CRITICAL RULES:
-1. ONLY cite papers from the PROVIDED LITERATURE LIST using [1], [2], etc. Do NOT invent or hallucinate citations not in the provided list — even if you know real papers exist on the topic. If the provided literature is thin for a section, flag it as a literature gap rather than adding invented references.
-2. Do NOT include unsourced generic statements (e.g. "The insulin signaling pathway is conserved across species..." with no citation). Every factual claim must be cited — either from the provided papers, or from well-established literature (textbooks, review articles) with a proper reference added to the references section. Cited textbook and review knowledge is encouraged and makes for a stronger background. Uncited filler is not acceptable.
+1. Cite papers from the PROVIDED LITERATURE LIST using numeric citations [1], [2], etc. The number must match the paper's position in that list. Do NOT invent citations or add references that are not in the provided list.
+2. Do NOT include unsourced factual statements. If the provided literature does not support a claim, flag it as a literature gap rather than adding a citation from memory.
 3. If literature is thin, flag it honestly: "⚠️ LITERATURE GAP: [specific gap]" and keep that section shorter rather than filling it with textbook knowledge.
 4. Experimental approaches must name SPECIFIC tools: exact GAL4 drivers, specific UAS lines, specific assays with parameters (e.g. "CAFE assay measuring food intake at days 5, 15, 30").
 5. The hypothesis must be falsifiable and specific — not "X affects aging" but "Loss of X in adult fat body neurons will extend median lifespan by >15% through upregulation of autophagy markers Atg1 and Atg8."
@@ -264,7 +324,7 @@ Return ONLY valid JSON with this exact structure:
   ],
   "literature_gaps": ["Specific gap 1 with why it matters", "Specific gap 2"],
   "references": [
-    {{"number": 1, "citation": "Author et al. (Year). Title. Journal. PMID: XXXXX", "url": "https://..."}}
+    {{"number": 1, "citation": "Author et al. (Year). Title. PMID: XXXXX", "url": "https://..."}}
   ]
 }}"""
 
@@ -331,6 +391,11 @@ REQUIREMENTS:
                 "references": []
             }
 
+        citation_numbers = _proposal_citation_numbers(proposal)
+        available_numbers = set(range(1, min(len(papers), 10) + 1))
+        valid_numbers = citation_numbers & available_numbers
+        proposal = _remove_unverified_citation_markers(proposal, valid_numbers)
+        proposal["references"] = _canonical_references(papers[:10], valid_numbers)
         self.current_proposal = proposal
         return proposal
 
@@ -379,6 +444,7 @@ Update the proposal accordingly and return the updated version with a changes su
             result = json.loads(clean)
             updated = result.get('updated_proposal', self.current_proposal)
             summary = result.get('changes_summary', 'Proposal updated.')
+            updated["references"] = self.current_proposal.get("references", [])
             self.current_proposal = updated
             return updated, summary
         except Exception as e:

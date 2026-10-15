@@ -9,7 +9,7 @@ echo ""
 
 # Check if Python is installed
 if ! command -v python3 &> /dev/null; then
-    echo "❌ Python 3 is not installed. Please install Python 3.8 or higher."
+    echo "❌ Python 3 is not installed. Please install Python 3.11."
     exit 1
 fi
 
@@ -51,7 +51,7 @@ if [ ! -f "venv/.installed" ]; then
 fi
 
 # Check for API key
-if [ -z "$ANTHROPIC_API_KEY" ]; then
+if [ -z "$ANTHROPIC_API_KEY" ] && [ ! -f ".env" ]; then
     echo ""
     echo "⚠️  ANTHROPIC_API_KEY not found!"
     echo ""
@@ -81,13 +81,8 @@ if [ -z "$ANTHROPIC_API_KEY" ]; then
     fi
 fi
 
-# Load .env file if it exists
-if [ -f ".env" ]; then
-    export $(cat .env | xargs)
-fi
-
 echo ""
-echo "✓ API key configured"
+echo "✓ Configuration check complete"
 echo ""
 echo "================================"
 echo "🚀 Starting Fly Design"

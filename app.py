@@ -4,6 +4,10 @@ import os
 from datetime import datetime
 import json
 import signal
+from dotenv import load_dotenv
+
+load_dotenv()
+
 from drosophila_assistant import DrosophilaAssistant
 from agents.pipeline import AgentPipeline
 import database
@@ -342,6 +346,10 @@ def agent_pipeline():
     """
     if not assistant:
         return jsonify({'error': 'API key not configured. Set ANTHROPIC_API_KEY.'}), 500
+    if not os.environ.get("GEMINI_API_KEY"):
+        return jsonify({
+            'error': 'Critic API key not configured. Set GEMINI_API_KEY to run the AI pipeline.'
+        }), 503
 
     try:
         data = request.get_json()
@@ -406,6 +414,7 @@ def health():
     return jsonify({
         'status': 'healthy',
         'api_configured': assistant is not None,
+        'critic_configured': bool(os.environ.get("GEMINI_API_KEY")),
         'features': {
             'pubmed_search': True,
             'flybase_lookup': True,

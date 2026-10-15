@@ -7,5 +7,11 @@ services:
     envVars:
       - key: ANTHROPIC_API_KEY
         sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: GEMINI_CRITIC_MODEL
+        value: gemini-3-flash
       - key: PYTHON_VERSION
         value: 3.11.0
