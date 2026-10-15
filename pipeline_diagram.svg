@@ -1,96 +1,70 @@
-<svg viewBox="0 0 1000 780" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+<svg viewBox="0 0 1100 640" xmlns="http://www.w3.org/2000/svg" font-family="Inter, Arial, sans-serif" role="img" aria-labelledby="title description">
+  <title id="title">Fly Design research workflow</title>
+  <desc id="description">A single-pass workflow from research question through literature, hypothesis, and critic agents to a proposal with review notes.</desc>
   <defs>
-    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
-      <path d="M0,0 L0,6 L9,3 z" fill="#4b5563"/>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L9,3 z" fill="#648078"/>
     </marker>
-    <marker id="arrowRed" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
-      <path d="M0,0 L0,6 L9,3 z" fill="#dc2626"/>
-    </marker>
+    <linearGradient id="header" x1="0" x2="1">
+      <stop offset="0" stop-color="#104e40"/>
+      <stop offset="1" stop-color="#176b55"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="5" stdDeviation="8" flood-color="#18382e" flood-opacity=".08"/>
+    </filter>
   </defs>
 
-  <rect x="0" y="0" width="1000" height="780" fill="#fafafa"/>
+  <rect width="1100" height="640" rx="24" fill="#f5f8f5"/>
+  <text x="56" y="65" font-size="14" font-weight="700" letter-spacing="2" fill="#176b55">FLY DESIGN / WORKFLOW</text>
+  <text x="56" y="104" font-size="28" font-weight="700" fill="#172b26">From research question to reviewed proposal</text>
+  <text x="56" y="132" font-size="15" fill="#61736d">One focused pass. No automatic retries.</text>
 
-  <text x="500" y="35" text-anchor="middle" font-size="22" font-weight="700" fill="#111827">Drosophila-Assistant Pipeline</text>
+  <rect x="56" y="188" width="215" height="130" rx="16" fill="#fff" stroke="#dce6e0" filter="url(#shadow)"/>
+  <circle cx="86" cy="220" r="15" fill="#eaf4ee"/>
+  <text x="86" y="225" text-anchor="middle" font-size="15" font-weight="700" fill="#176b55">01</text>
+  <text x="78" y="261" font-size="17" font-weight="700" fill="#172b26">Research question</text>
+  <text x="78" y="286" font-size="13" fill="#61736d">Topic, phenotype, or genes</text>
+  <text x="78" y="305" font-size="13" fill="#61736d">to investigate</text>
 
-  <!-- User query -->
-  <rect x="380" y="55" width="240" height="50" rx="10" fill="#111827"/>
-  <text x="500" y="86" text-anchor="middle" font-size="15" fill="#ffffff" font-weight="600">User Query (topic + genes)</text>
+  <line x1="271" y1="253" x2="302" y2="253" stroke="#648078" stroke-width="2" marker-end="url(#arrow)"/>
 
-  <line x1="500" y1="105" x2="500" y2="135" stroke="#4b5563" stroke-width="2" marker-end="url(#arrow)"/>
+  <rect x="310" y="188" width="215" height="130" rx="16" fill="#fff" stroke="#dce6e0" filter="url(#shadow)"/>
+  <circle cx="340" cy="220" r="15" fill="#eaf4ee"/>
+  <text x="340" y="225" text-anchor="middle" font-size="15" font-weight="700" fill="#176b55">02</text>
+  <text x="332" y="261" font-size="17" font-weight="700" fill="#172b26">Literature</text>
+  <text x="332" y="286" font-size="13" fill="#61736d">FlyBase genes &amp; stocks</text>
+  <text x="332" y="305" font-size="13" fill="#61736d">PubMed papers &amp; research gaps</text>
 
-  <!-- Flask app -->
-  <rect x="360" y="135" width="280" height="50" rx="10" fill="#e5e7eb" stroke="#9ca3af" stroke-width="1.5"/>
-  <text x="500" y="166" text-anchor="middle" font-size="14" fill="#111827" font-weight="600">Flask App (app.py) — session + routing</text>
+  <line x1="525" y1="253" x2="556" y2="253" stroke="#648078" stroke-width="2" marker-end="url(#arrow)"/>
 
-  <line x1="500" y1="185" x2="500" y2="215" stroke="#4b5563" stroke-width="2" marker-end="url(#arrow)"/>
+  <rect x="564" y="188" width="215" height="130" rx="16" fill="#fff" stroke="#dce6e0" filter="url(#shadow)"/>
+  <circle cx="594" cy="220" r="15" fill="#eaf4ee"/>
+  <text x="594" y="225" text-anchor="middle" font-size="15" font-weight="700" fill="#176b55">03</text>
+  <text x="586" y="261" font-size="17" font-weight="700" fill="#172b26">Hypothesis</text>
+  <text x="586" y="286" font-size="13" fill="#61736d">Falsifiable claim and</text>
+  <text x="586" y="305" font-size="13" fill="#61736d">experimental plan</text>
 
-  <!-- Literature fetch -->
-  <rect x="330" y="215" width="340" height="55" rx="10" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.5"/>
-  <text x="500" y="238" text-anchor="middle" font-size="13.5" fill="#1e3a8a" font-weight="600">Literature Retrieval</text>
-  <text x="500" y="256" text-anchor="middle" font-size="12" fill="#1e3a8a">FlyBase gene/stock lookup + PubMed search</text>
+  <line x1="779" y1="253" x2="810" y2="253" stroke="#648078" stroke-width="2" marker-end="url(#arrow)"/>
 
-  <line x1="500" y1="270" x2="500" y2="300" stroke="#4b5563" stroke-width="2" marker-end="url(#arrow)"/>
+  <rect x="818" y="188" width="226" height="130" rx="16" fill="#fff" stroke="#dce6e0" filter="url(#shadow)"/>
+  <circle cx="848" cy="220" r="15" fill="#fff4df"/>
+  <text x="848" y="225" text-anchor="middle" font-size="15" font-weight="700" fill="#a56b13">04</text>
+  <text x="840" y="261" font-size="17" font-weight="700" fill="#172b26">Independent critique</text>
+  <text x="840" y="286" font-size="13" fill="#61736d">Feasibility, evidence,</text>
+  <text x="840" y="305" font-size="13" fill="#61736d">controls, and scoring</text>
 
-  <!-- Iteration loop box -->
-  <rect x="120" y="300" width="760" height="330" rx="14" fill="none" stroke="#9ca3af" stroke-width="1.5" stroke-dasharray="6,4"/>
-  <text x="140" y="322" font-size="12.5" fill="#6b7280" font-style="italic">Agent loop — up to 3 iterations, tracks best-scoring attempt</text>
+  <line x1="931" y1="318" x2="931" y2="370" stroke="#648078" stroke-width="2" marker-end="url(#arrow)"/>
 
-  <!-- Literature Agent -->
-  <rect x="160" y="340" width="230" height="60" rx="10" fill="#bfdbfe" stroke="#2563eb" stroke-width="1.5"/>
-  <text x="275" y="365" text-anchor="middle" font-size="13.5" font-weight="600" fill="#1e3a8a">Literature Agent</text>
-  <text x="275" y="383" text-anchor="middle" font-size="11.5" fill="#1e3a8a">synthesizes papers → genes,</text>
-  <text x="275" y="396" text-anchor="middle" font-size="11.5" fill="#1e3a8a">pathways, orthologs, gaps</text>
+  <rect x="234" y="382" width="630" height="116" rx="18" fill="url(#header)" filter="url(#shadow)"/>
+  <text x="274" y="422" font-size="13" font-weight="700" letter-spacing="1.5" fill="#bde4ce">FINAL OUTPUT</text>
+  <text x="274" y="456" font-size="21" font-weight="700" fill="#fff">Research proposal + critic feedback</text>
+  <text x="274" y="480" font-size="14" fill="#e0efe5">Review notes stay attached; the draft is not regenerated automatically.</text>
 
-  <line x1="390" y1="370" x2="425" y2="370" stroke="#4b5563" stroke-width="2" marker-end="url(#arrow)"/>
-
-  <!-- Hypothesis Agent -->
-  <rect x="425" y="340" width="230" height="60" rx="10" fill="#bbf7d0" stroke="#16a34a" stroke-width="1.5"/>
-  <text x="540" y="365" text-anchor="middle" font-size="13.5" font-weight="600" fill="#14532d">Hypothesis Agent</text>
-  <text x="540" y="383" text-anchor="middle" font-size="11.5" fill="#14532d">designs falsifiable hypothesis</text>
-  <text x="540" y="396" text-anchor="middle" font-size="11.5" fill="#14532d">+ experimental plan</text>
-
-  <line x1="655" y1="370" x2="690" y2="370" stroke="#4b5563" stroke-width="2" marker-end="url(#arrow)"/>
-
-  <!-- Critic Agent -->
-  <rect x="655" y="440" width="230" height="70" rx="10" fill="#fecaca" stroke="#dc2626" stroke-width="1.5"/>
-  <text x="770" y="463" text-anchor="middle" font-size="13.5" font-weight="600" fill="#7f1d1d">Critic Agent (Gemini)</text>
-  <text x="770" y="480" text-anchor="middle" font-size="11" fill="#7f1d1d">scores: hallucination defense,</text>
-  <text x="770" y="494" text-anchor="middle" font-size="11" fill="#7f1d1d">genetic feasibility, control reasoning</text>
-
-  <line x1="770" y1="440" x2="770" y2="400" stroke="#4b5563" stroke-width="2" marker-end="url(#arrow)"/>
-
-  <!-- Verdict diamond -->
-  <polygon points="770,545 860,585 770,625 680,585" fill="#fef3c7" stroke="#d97706" stroke-width="1.5"/>
-  <text x="770" y="580" text-anchor="middle" font-size="12.5" font-weight="600" fill="#78350f">verdict?</text>
-  <text x="770" y="596" text-anchor="middle" font-size="11" fill="#78350f">pass / fail</text>
-
-  <line x1="770" y1="510" x2="770" y2="545" stroke="#4b5563" stroke-width="2" marker-end="url(#arrow)"/>
-
-  <!-- Route back to hypothesis -->
-  <path d="M 680,585 C 500,585 500,400 540,400" fill="none" stroke="#dc2626" stroke-width="2" stroke-dasharray="5,3" marker-end="url(#arrowRed)"/>
-  <text x="490" y="590" text-anchor="middle" font-size="11" fill="#dc2626" font-style="italic">fail → send back to</text>
-  <text x="490" y="602" text-anchor="middle" font-size="11" fill="#dc2626" font-style="italic">hypothesis or literature</text>
-
-  <path d="M 620,585 C 350,610 250,470 275,400" fill="none" stroke="#dc2626" stroke-width="2" stroke-dasharray="5,3" marker-end="url(#arrowRed)"/>
-
-  <!-- Pass path -->
-  <line x1="770" y1="625" x2="770" y2="655" stroke="#16a34a" stroke-width="2.5" marker-end="url(#arrow)"/>
-  <text x="810" y="645" font-size="11" fill="#16a34a" font-style="italic">pass or</text>
-  <text x="810" y="657" font-size="11" fill="#16a34a" font-style="italic">max iters</text>
-
-  <!-- Final result -->
-  <rect x="330" y="655" width="340" height="50" rx="10" fill="#111827"/>
-  <text x="500" y="686" text-anchor="middle" font-size="14" fill="#ffffff" font-weight="600">Best-scoring proposal (literature + hypothesis + critic review)</text>
-
-  <line x1="500" y1="705" x2="500" y2="735" stroke="#4b5563" stroke-width="2" marker-end="url(#arrow)"/>
-
-  <!-- Outputs -->
-  <rect x="200" y="735" width="230" height="40" rx="8" fill="#e5e7eb" stroke="#9ca3af"/>
-  <text x="315" y="760" text-anchor="middle" font-size="12.5" fill="#111827">Supabase (session persistence)</text>
-
-  <rect x="570" y="735" width="230" height="40" rx="8" fill="#e5e7eb" stroke="#9ca3af"/>
-  <text x="685" y="760" text-anchor="middle" font-size="12.5" fill="#111827">Word doc export (.docx)</text>
-
-  <line x1="500" y1="705" x2="315" y2="735" stroke="#4b5563" stroke-width="2" marker-end="url(#arrow)"/>
-  <line x1="500" y1="705" x2="685" y2="735" stroke="#4b5563" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="549" y1="498" x2="549" y2="536" stroke="#648078" stroke-width="2" marker-end="url(#arrow)"/>
+  <rect x="360" y="546" width="180" height="52" rx="12" fill="#fff" stroke="#dce6e0"/>
+  <text x="450" y="578" text-anchor="middle" font-size="14" font-weight="600" fill="#31443d">Supabase session</text>
+  <rect x="558" y="546" width="180" height="52" rx="12" fill="#fff" stroke="#dce6e0"/>
+  <text x="648" y="578" text-anchor="middle" font-size="14" font-weight="600" fill="#31443d">Word document</text>
+  <line x1="549" y1="536" x2="450" y2="546" stroke="#648078" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="549" y1="536" x2="648" y2="546" stroke="#648078" stroke-width="1.5" marker-end="url(#arrow)"/>
 </svg>

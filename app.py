@@ -210,7 +210,7 @@ def export_conversation():
         if not history:
             return jsonify({'error': 'No conversation found'}), 404
 
-        markdown = "# Drosophila Research Conversation\n\n"
+        markdown = "# Fly Design — Drosophila Research Conversation\n\n"
         markdown += f"Exported: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n---\n\n"
 
         for msg in history:
@@ -222,7 +222,7 @@ def export_conversation():
 
         return jsonify({
             'markdown': markdown,
-            'filename': f"drosophila_conversation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+            'filename': f"fly_design_conversation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -443,7 +443,7 @@ if __name__ == '__main__':
         print("="*60)
 
     print("\n" + "="*60)
-    print("🪰 Drosophila Research Assistant - WITH RESEARCH PLANNER")
+    print("🪰 Fly Design - Drosophila Research Studio")
     print("="*60)
     print(f"\n✓ Server starting on http://localhost:{port}")
     print("\n✨ Features:")

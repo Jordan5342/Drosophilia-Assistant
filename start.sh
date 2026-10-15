@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# Drosophila Research Assistant - Startup Script
+# Fly Design - Startup Script
 # This script makes it easy to start the application
 
-echo "🪰 Drosophila Research Assistant"
+echo "🪰 Fly Design"
 echo "================================"
 echo ""
 
@@ -90,7 +90,7 @@ echo ""
 echo "✓ API key configured"
 echo ""
 echo "================================"
-echo "🚀 Starting Drosophila Assistant"
+echo "🚀 Starting Fly Design"
 echo "================================"
 echo ""
 echo "🌐 Open in your browser: http://localhost:5000"

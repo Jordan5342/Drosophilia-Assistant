@@ -1,8 +1,8 @@
 @echo off
-REM Drosophila Research Assistant - Windows Startup Script
+REM Fly Design - Windows Startup Script
 
 echo ================================================
-echo  Drosophila Research Assistant
+echo  Fly Design
 echo ================================================
 echo.
 
@@ -85,7 +85,7 @@ if "%ANTHROPIC_API_KEY%"=="" (
 echo [OK] API key configured
 echo.
 echo ================================================
-echo  Starting Drosophila Assistant
+echo  Starting Fly Design
 echo ================================================
 echo.
 echo  Open in your browser: http://localhost:5000

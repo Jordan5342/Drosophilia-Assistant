@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Drosophila Research Assistant</title>
+    <title>Fly Design | Drosophila Research Studio</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🪰</text></svg>">
     <style>
         :root {
@@ -734,6 +734,176 @@
             margin-top: 40px;
             font-size: 12px;
         }
+
+        :root {
+            --primary: #176b55;
+            --primary-dark: #104e40;
+            --accent: #176b55;
+            --bg-tan: #f3f6f3;
+            --bg-light-tan: #f8faf8;
+            --text-dark: #172b26;
+            --text-gray: #61736d;
+            --border: #dce6e0;
+            --plan-bg: #eff7f2;
+            --plan-border: #6ca68b;
+        }
+
+        body { background: #edf2ee; color: var(--text-dark); }
+        .app-wrapper { gap: 0; background: #f8faf8; }
+        .chat-panel { background: #f8faf8; }
+        .header {
+            background: #fff;
+            color: var(--text-dark);
+            border-bottom: 1px solid var(--border);
+            padding: 16px 28px;
+            box-shadow: 0 4px 18px rgb(23 43 38 / 0.04);
+        }
+        .logo {
+            display: grid;
+            place-items: center;
+            width: 44px;
+            height: 44px;
+            border-radius: 14px;
+            background: #eaf4ee;
+            font-size: 25px;
+        }
+        .title-group h1 { font-size: 19px; letter-spacing: -0.4px; }
+        .title-group p { color: #71817a; opacity: 1; }
+        .status-badge { background: #edf7f0; color: #25734f; }
+        .btn, .btn-plan, .btn-pipeline {
+            min-height: 40px;
+            border-radius: 10px;
+            box-shadow: none;
+        }
+        .btn { border: 1px solid var(--border); color: #31443d; }
+        .btn-plan, .btn-pipeline, .btn-send {
+            background: #176b55;
+            color: #fff;
+        }
+        .btn-plan.active {
+            background: #104e40;
+            box-shadow: 0 0 0 3px rgb(23 107 85 / 0.16);
+        }
+        .btn-plan:hover, .btn-pipeline:hover:not(:disabled), .btn-send:hover:not(:disabled) {
+            background: #104e40;
+            box-shadow: 0 5px 14px rgb(23 107 85 / 0.18);
+        }
+        .btn-pipeline { border: 1px solid #176b55; }
+        .messages { padding: 32px clamp(20px, 5vw, 76px); }
+        .welcome-screen { max-width: 680px; margin: 0 auto; }
+        .welcome-screen .icon {
+            display: grid;
+            place-items: center;
+            width: 76px;
+            height: 76px;
+            margin-bottom: 24px;
+            border-radius: 24px;
+            background: #eaf4ee;
+            font-size: 40px;
+        }
+        .welcome-screen h2 {
+            color: #172b26;
+            font-size: clamp(30px, 4vw, 42px);
+            letter-spacing: -1.4px;
+        }
+        .welcome-screen p { max-width: 550px; line-height: 1.8; }
+        .message { gap: 12px; margin-bottom: 20px; }
+        .avatar { width: 36px; height: 36px; }
+        .message.user .avatar, .message.user .message-content {
+            background: #176b55;
+        }
+        .message-content {
+            max-width: min(78%, 760px);
+            border-radius: 16px;
+            box-shadow: 0 2px 8px rgb(23 43 38 / 0.04);
+        }
+        .message.assistant .message-content { border-color: #e4ebe6; }
+        .message.planning .avatar { background: #eaf4ee; }
+        .message.planning .message-content {
+            background: #eff7f2;
+            border-color: #6ca68b;
+            color: #104e40;
+        }
+        .planning-badge { background: #176b55; }
+        .view-proposal-btn, .view-proposal-btn:hover { background: #176b55; }
+        .planning-mode-indicator {
+            background: #eff7f2;
+            border-color: #6ca68b;
+            color: #104e40;
+        }
+        #messageInput.planning-input { border-color: #6ca68b; }
+        .input-area {
+            padding: 16px clamp(20px, 5vw, 76px) 22px;
+            background: #fff;
+            border-top: 1px solid var(--border);
+        }
+        .input-controls, .input-wrapper { max-width: 1080px; margin-left: auto; margin-right: auto; }
+        .input-controls { margin-bottom: 10px; }
+        #messageInput {
+            border-color: #dce6e0;
+            border-radius: 14px;
+            box-shadow: 0 3px 12px rgb(23 43 38 / 0.04);
+        }
+        #messageInput:focus { border-color: #6ca68b; }
+        .btn-send { border-radius: 12px; }
+        .proposal-panel {
+            border-left: 1px solid var(--border);
+            box-shadow: -8px 0 24px rgb(23 43 38 / 0.05);
+        }
+        .proposal-panel-header { background: #176b55; }
+        .proposal-panel-body h2 { color: #104e40; border-color: #6ca68b; }
+        .proposal-panel-body h3, .proposal-panel-body strong { color: #176b55; }
+        .proposal-panel-footer { background: #f8faf8; }
+        .btn-export-docx { background: #176b55; }
+        .aim-selector { background: #f2f8f4; }
+        .aim-selector-label { color: #176b55; }
+        .btn-aim { border-color: #6ca68b; color: #176b55; }
+        .btn-aim:hover { background: #eff7f2; }
+        .btn-aim.active { background: #176b55; color: #fff; }
+        .design-loading { color: #176b55; }
+        .design-loading .spinner { border-color: #eff7f2; border-top-color: #176b55; }
+        .proposal-panel-body th {
+            background: #eff7f2;
+            color: #104e40;
+            border-color: #dce6e0;
+        }
+        .proposal-panel-body td { border-color: #e4ebe6; }
+        .proposal-panel-body tr:nth-child(even) td { background: #f8faf8; }
+        .checkpoint-block { background: #f2f8f4; border-left-color: #6ca68b; }
+        .debug-panel.open { width: min(420px, 38vw); }
+
+        @media (max-width: 900px) {
+            .header { align-items: flex-start; gap: 14px; flex-direction: column; }
+            .header-actions { width: 100%; }
+        }
+
+        @media (max-width: 640px) {
+            .app-wrapper { position: relative; }
+            .chat-panel { width: 100%; }
+            .header { padding: 14px 16px; }
+            .header-actions { gap: 7px; }
+            .header-actions .btn, .header-actions .btn-plan, .header-actions .btn-pipeline {
+                padding: 8px 10px;
+                font-size: 12px;
+            }
+            .messages { padding: 22px 16px; }
+            .welcome-screen { padding: 24px 10px; }
+            .message-content { max-width: 88%; padding: 12px 14px; }
+            .input-area { padding: 12px 14px 16px; }
+            .input-wrapper { gap: 7px; }
+            #messageInput { min-width: 0; padding: 12px; }
+            .btn-send { padding: 12px 14px; }
+            .proposal-panel.open, .debug-panel.open {
+                position: absolute;
+                z-index: 5;
+                inset: 0;
+                width: 100%;
+                min-height: 100%;
+            }
+            .proposal-panel-header { gap: 8px; padding: 14px; }
+            .proposal-panel-header h2 { font-size: 14px; }
+            .proposal-panel-header .panel-actions { gap: 5px; }
+        }
     </style>
 </head>
 <body>
@@ -745,8 +915,8 @@
             <div class="header-left">
                 <div class="logo">🪰</div>
                 <div class="title-group">
-                    <h1>Drosophila Research Assistant</h1>
-                    <p>FlyBase · PubMed · Research Planner</p>
+                    <h1>Fly Design</h1>
+                    <p>Drosophila research studio · FlyBase · PubMed</p>
                 </div>
             </div>
             <div class="header-actions">
@@ -766,9 +936,8 @@
         <div class="messages" id="messages">
             <div class="welcome-screen">
                 <div class="icon">🪰</div>
-                <h2>Welcome!</h2>
-                <p>Ask me about Drosophila genetics, search papers, or explore gene function.<br>
-                When you're ready, click <strong>🔬 Plan Research</strong> to build a proposal.</p>
+                <h2>Design your next fly study.</h2>
+                <p>Explore gene function, find the literature, and turn a research question into a considered experimental proposal. Start with a gene, a phenotype, or an idea.</p>
             </div>
         </div>
 
@@ -841,7 +1010,7 @@
             <button class="btn-panel-close" onclick="closeDebugPanel()" title="Close">×</button>
         </div>
         <div class="debug-body" id="debugBody">
-            <div class="debug-idle">Click "🤖 Run AI Pipeline" to start.<br><br>The pipeline runs three agents:<br>📚 Literature → 🧪 Hypothesis → ⚖️ Critic<br><br>Up to 3 iterations with automatic routing.</div>
+            <div class="debug-idle">Click "🤖 Run AI Pipeline" to start.<br><br>One focused pass through:<br>📚 Literature → 🧪 Hypothesis → ⚖️ Critic<br><br>The critic’s notes are included with the proposal; the pipeline does not retry automatically.</div>
         </div>
     </div>
 
@@ -1713,8 +1882,8 @@
         switch (type) {
             case 'agent_start': {
                 const label = agentLabels[data.agent] || data.agent;
-                updatePipelineStatus(label + ' Agent (iter ' + data.iteration + ')...');
-                appendDebugSection('Iteration ' + data.iteration + ' — ' + label + ' Agent', agentColors[data.agent]);
+                updatePipelineStatus(label + ' Agent (pass ' + data.iteration + ')...');
+                appendDebugSection('Pass ' + data.iteration + ' — ' + label + ' Agent', agentColors[data.agent]);
                 appendDebugLine('running', data.label || 'Running ' + data.agent + ' agent...');
                 break;
             }
@@ -1764,7 +1933,6 @@
 
     function handlePipelineComplete(data) {
         const passed = data.passed;
-        const iters  = data.total_iterations;
         const score  = data.best_score;
         const hyp    = data.final_hypothesis || {};
         const critic = data.final_critic || {};
@@ -1773,14 +1941,14 @@
         appendDebugLine(
             passed ? 'pass' : 'warn',
             passed
-                ? '✅ Approved in ' + iters + ' iteration' + (iters > 1 ? 's' : '')
-                : '⚠ Best attempt after ' + iters + ' iterations (score ' + score + '/30)'
+                ? '✅ Proposal approved (score ' + score + '/30)'
+                : '⚠ Review complete — see critic feedback (score ' + score + '/30)'
         );
 
         // Build chat message
         let msg = passed
-            ? '✅ **Agent Pipeline Complete** (' + iters + ' iteration' + (iters > 1 ? 's' : '') + ')\n\n'
-            : '⚠️ **Agent Pipeline — Best Attempt** (' + iters + ' iterations, score ' + score + '/30)\n\n';
+            ? '✅ **Fly Design review complete — proposal approved** (score ' + score + '/30)\n\n'
+            : '⚠️ **Fly Design review complete — critic feedback included** (score ' + score + '/30)\n\n';
 
         if (hyp.hypothesis)            msg += '**Hypothesis:**\n' + hyp.hypothesis + '\n\n';
         if (hyp.experimental_approach) msg += '**Experimental Approach:**\n' + hyp.experimental_approach + '\n\n';

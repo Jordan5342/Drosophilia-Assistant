@@ -137,7 +137,7 @@ def build_proposal_docx(proposal) -> bytes:
     doc = _new_doc()
 
     _centered(doc, proposal.get('title') or 'Research Proposal', 20, DARK, bold=True, before_pt=24, after_pt=12)
-    _centered(doc, 'Drosophila Research Proposal', 12, BLUE, after_pt=6)
+    _centered(doc, 'Fly Design · Drosophila Research Proposal', 12, BLUE, after_pt=6)
     _centered(doc, datetime.now().strftime('%B %d, %Y'), 11, GRAY, after_pt=24)
     _spacer(doc)
 

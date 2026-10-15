@@ -3,7 +3,7 @@ from agents.literature_agent import LiteratureAgent
 from agents.hypothesis_agent import HypothesisAgent
 from agents.gemini_critic_agent import CriticAgent
 
-MAX_ITERATIONS = 3
+MAX_ITERATIONS = 1
 
 
 class AgentPipeline:
@@ -45,9 +45,9 @@ class AgentPipeline:
                 yield {"type": "agent_start", "data": {
                     "agent": "literature",
                     "iteration": iteration,
-                    "label": f"Literature Agent — fetching & synthesizing papers (iteration {iteration})"
+                    "label": f"Literature Agent — fetching & synthesizing papers (pass {iteration})"
                 }}
-                print(f"  [Pipeline i{iteration}] Literature Agent: fetch + synthesize")
+                print(f"  [Pipeline pass {iteration}] Literature Agent: fetch + synthesize")
                 try:
                     cached_papers = self.fetch_literature(
                         topic=topic,
@@ -57,7 +57,7 @@ class AgentPipeline:
                     lit_output = self.lit_agent.run(topic, cached_papers, critic_feedback)
                     cached_lit_output = lit_output
                 except Exception as exc:
-                    print(f"  [Pipeline i{iteration}] Literature Agent error: {exc}")
+                    print(f"  [Pipeline pass {iteration}] Literature Agent error: {exc}")
                     lit_output = {
                         "_error": str(exc),
                         "genes": genes,
@@ -79,7 +79,7 @@ class AgentPipeline:
             else:
                 # Critic routed back to hypothesis only — reuse cached literature
                 lit_output = cached_lit_output
-                print(f"  [Pipeline i{iteration}] Reusing cached literature (critic sent back to hypothesis)")
+                print(f"  [Pipeline pass {iteration}] Reusing cached literature")
                 if debug:
                     yield {"type": "agent_skipped", "data": {
                         "agent": "literature",
@@ -91,13 +91,13 @@ class AgentPipeline:
             yield {"type": "agent_start", "data": {
                 "agent": "hypothesis",
                 "iteration": iteration,
-                "label": f"Hypothesis Agent — designing experiment (iteration {iteration})"
+                "label": f"Hypothesis Agent — designing experiment (pass {iteration})"
             }}
-            print(f"  [Pipeline i{iteration}] Hypothesis Agent")
+            print(f"  [Pipeline pass {iteration}] Hypothesis Agent")
             try:
                 hyp_output = self.hyp_agent.run(lit_output, topic, critic_feedback)
             except Exception as exc:
-                print(f"  [Pipeline i{iteration}] Hypothesis Agent error: {exc}")
+                print(f"  [Pipeline pass {iteration}] Hypothesis Agent error: {exc}")
                 hyp_output = {
                     "_error": str(exc),
                     "hypothesis": f"Error: {exc}",
@@ -119,13 +119,13 @@ class AgentPipeline:
             yield {"type": "agent_start", "data": {
                 "agent": "critic",
                 "iteration": iteration,
-                "label": f"Critic Agent — evaluating proposal (iteration {iteration})"
+                "label": f"Critic Agent — evaluating proposal (pass {iteration})"
             }}
-            print(f"  [Pipeline i{iteration}] Critic Agent")
+            print(f"  [Pipeline pass {iteration}] Critic Agent")
             try:
                 critic_output = self.critic.run(hyp_output, lit_output, topic)
             except Exception as exc:
-                print(f"  [Pipeline i{iteration}] Critic Agent error: {exc}")
+                print(f"  [Pipeline pass {iteration}] Critic Agent error: {exc}")
                 critic_output = {
                     "_error": str(exc),
                     "verdict": "fail",
@@ -195,8 +195,8 @@ class AgentPipeline:
                     "verdict": "fail",
                     "send_back_to": None,
                     "message": (
-                        f"Max iterations reached. Surfacing best attempt "
-                        f"(best score {best_score}/30)"
+                        "Single-pass review complete. Surfacing the proposal "
+                        f"with critic feedback (score {best_score}/30)"
                     )
                 }}
 

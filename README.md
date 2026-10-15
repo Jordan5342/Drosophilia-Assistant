@@ -1,6 +1,6 @@
-# Drosophila-Assistant
+# Fly Design
 
-A multi-agent AI pipeline that helps design experimental proposals for *Drosophila melanogaster* genomics research. Give it a research topic and a set of genes, and it retrieves relevant literature, drafts a testable hypothesis and experimental plan, then critiques and refines the proposal automatically before handing back a finished draft.
+Fly Design is a research studio for developing experimental proposals in *Drosophila melanogaster* genomics. Give it a research topic and a set of genes to retrieve relevant literature, draft a testable hypothesis and experimental plan, and receive an independent critique with the proposal.
 
 ## How it works
 
@@ -10,7 +10,7 @@ A multi-agent AI pipeline that helps design experimental proposals for *Drosophi
 2. **Literature Agent** — synthesizes the retrieved papers into a structured summary: relevant genes, signaling pathways, human orthologs, disease relevance, and specific gaps in current knowledge.
 3. **Hypothesis Agent** — turns that synthesis into a falsifiable, quantified hypothesis with a concrete experimental plan (fly lines, GAL4/UAS design, controls, expected outcomes).
 4. **Critic Agent (Gemini)** — independently scores the proposal on three axes: hallucination defense (no fabricated genes/papers), genetic feasibility (are the fly lines and crosses real and workable), and control reasoning. Using a different model family than the generator avoids shared blind spots between generator and critic.
-5. **Routing loop** — if the critic fails the proposal, it's sent back to the Hypothesis Agent (or all the way back to Literature Retrieval, if the issue is upstream) for another pass. This repeats up to 3 iterations, and the pipeline keeps the best-scoring attempt seen so far.
+5. **Single-pass critique** — the Critic Agent evaluates the draft once. The pipeline returns the proposal and critic feedback together; it does not automatically loop or regenerate the draft.
 6. **Output** — the final proposal is persisted to Supabase and can be exported as a Word document.
 
 ## Tech stack
@@ -31,10 +31,10 @@ database.py                  # Supabase persistence
 docx_export.py               # Proposal/experiment-design → Word doc export
 research_planner.py          # Research planning support logic
 agents/
-  pipeline.py                 # Orchestrates the Literature → Hypothesis → Critic loop
+  pipeline.py                 # Runs one Literature → Hypothesis → Critic pass
   literature_agent.py          # Synthesizes papers into structured findings
   hypothesis_agent.py          # Drafts falsifiable hypothesis + experimental plan
-  gemini_critic_agent.py       # Independent critic, scores + routes iterations
+  gemini_critic_agent.py       # Independent critic and proposal scoring
 static/index.html             # Frontend
 ```
 

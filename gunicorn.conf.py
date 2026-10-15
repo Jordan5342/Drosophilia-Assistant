@@ -1,4 +1,4 @@
-# Gunicorn configuration file for Drosophila Research Assistant
+# Gunicorn configuration file for Fly Design
 # Place this file in your project root as: gunicorn.conf.py
 
 import multiprocessing
@@ -24,7 +24,7 @@ loglevel = 'info'
 access_log_format = '%(h)s %(l)s %(u)s %(t)s "%(r)s" %(s)s %(b)s "%(f)s" "%(a)s" %(D)s'
 
 # Process naming
-proc_name = 'drosophila_assistant'
+proc_name = 'fly_design'
 
 # Server mechanics
 daemon = False

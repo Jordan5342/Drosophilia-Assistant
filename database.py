@@ -1,5 +1,5 @@
 """
-Persistent storage layer for the Drosophila Research Assistant.
+Persistent storage layer for Fly Design.
 Backed by Supabase PostgreSQL via psycopg2. DATABASE_URL must be set in env.
 
 All JSON fields are stored as JSONB in Postgres. psycopg2 returns JSONB columns as
