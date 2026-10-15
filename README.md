@@ -11,7 +11,13 @@ Fly Design is a research studio for developing experimental proposals in *Drosop
 3. **Hypothesis Agent** — turns that synthesis into a falsifiable, quantified hypothesis with a concrete experimental plan (fly lines, GAL4/UAS design, controls, expected outcomes).
 4. **Critic Agent (Gemini)** — independently scores the proposal from 1–5 on three axes: hallucination defense (no fabricated genes/papers), genetic feasibility (are the fly lines and crosses real and workable), and control reasoning. These are descriptive scores, not an automatic pass/fail decision. Using a different model family than the generator avoids shared blind spots between generator and critic.
 5. **Single-pass critique** — the Critic Agent evaluates the draft once. The pipeline returns the proposal and critic feedback together; it does not automatically loop or regenerate the draft.
-6. **Output** — the final proposal can be persisted to PostgreSQL when configured and exported as a Word document.
+6. **Output** — pipeline proposals, critic feedback, and verified references are saved with the session, restored in the proposal panel, and exported as a Word document. PostgreSQL provides server-side persistence when configured; a browser-side proposal cache also supports reloads and exports without it. Literature displays identify the retrieval source and DOI when available. TF-IDF scores are labeled as text-match heuristics, not evidence-quality ratings.
+
+### Evidence and uncertainty
+
+Chat and proposal prompts require inline citations for literature-based claims, distinguish findings from inferences and proposed experiments, and instruct the models not to invent references or claim stock availability without evidence. Chat citations use current-turn PMID/source identifiers, then are rebuilt as numbered references from retrieved records; unmatched or legacy citation markers are removed and surfaced as a limitation. When retrieval returns no papers, the response and proposal are explicitly labeled unverified.
+
+An automated evidence-check pass reviews factual claims in chat and proposals against retrieved titles and abstracts. Chat, planner, and pipeline proposal generation also emit structured claim records, which are combined with a separate claim-extraction pass; the review reports how many extracted factual claims received an assessment and marks incomplete coverage explicitly. Claims are classified as supported, not found, or uncertain, and exact abstract sentences are required before showing supporting evidence. A quote is checked against the retrieved text in code, but the claim-to-quote judgment is still model-generated; this is a review aid, not scientific verification. The pass adds model calls to each answer/proposal. Consult original sources and expert reviewers before relying on claims.
 
 ## Tech stack
 

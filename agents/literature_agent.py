@@ -38,14 +38,20 @@ Required schema:
     "Specific gap 1 — what is unknown and why it matters",
     "Specific gap 2"
   ],
+  "evidence_claims": [
+    {"claim": "Exact claim text from a synthesis field", "evidence_type": "finding|inference|general_background|proposal|prediction", "source_ids": ["exact PMID or SOURCE token"]}
+  ],
   "summary": "2-3 sentence synthesis of the current state of the field"
 }
 
 RULES:
 - Only include genes and papers from the PROVIDED literature
+- Cite every literature-based finding with the provided paper number, e.g. [1]; cite only when the supplied abstract supports that finding
+- Distinguish direct findings from inference, and label inference explicitly
 - Gaps must be specific and actionable (not generic "more research needed")
 - If critic feedback is provided, directly address every issue raised
-- Human orthologs must include disease relevance
+- Do not state human ortholog or disease relevance as fact unless the supplied literature supports it; otherwise omit it or mark it unverified
+- Include every material factual claim in evidence_claims as an exact contiguous quote from the synthesis fields, including unsupported claims. Use exact retrieved PMID/SOURCE identifiers for cited papers, and [] when a claim has no citation.
 """
 
 
@@ -77,9 +83,11 @@ class LiteratureAgent:
                 user_content += f"    Source: {p.get('source', 'Unknown')}\n\n"
         else:
             user_content += (
-                "No papers were retrieved for this topic. "
-                "Synthesize from your knowledge of Drosophila biology but clearly "
-                "flag every claim as unverified and maximize the identified_gaps list.\n\n"
+                "No papers were retrieved for this topic. Do not synthesize "
+                "literature findings from memory. Return empty lists for genes, "
+                "pathways, human_orthologs, and key_papers; state in summary "
+                "and disease_context that evidence is insufficient without "
+                "retrieved literature; identify retrieval as the limitation.\n\n"
             )
 
         user_content += "Return your synthesis as JSON only."

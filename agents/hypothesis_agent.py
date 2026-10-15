@@ -34,13 +34,20 @@ Required schema:
     "Aim 1: Short title — specific objective",
     "Aim 2: Short title — specific objective",
     "Aim 3: Short title — specific objective"
+  ],
+  "evidence_claims": [
+    {"claim": "Exact claim text from a hypothesis field", "evidence_type": "finding|inference|general_background|proposal|prediction", "source_ids": ["exact PMID or SOURCE token"]}
   ]
 }
 
 RULES:
 - Hypothesis MUST be falsifiable and quantified (include numbers and conditions)
-- Fly lines must use proper Drosophila genotype notation
+- Cite literature-derived premises with the provided paper numbers, and distinguish them from inference
+- Do not invent BDSC stock numbers, FBgn IDs, or claim that a line exists or is available unless that fact is in the supplied literature; label unspecified lines as requiring verification
+- Fly lines must use proper Drosophila genotype notation when a genotype is proposed
 - Novelty must explicitly reference gaps identified in the literature synthesis
+- Label hypotheses, predictions, and proposed methods as proposed rather than established results
+- Include every material factual claim in evidence_claims as an exact contiguous quote from the hypothesis fields, including unsupported claims. Use exact PMID/SOURCE identifiers for cited papers, and [] when a claim has no citation.
 - If critic feedback is provided, address EVERY issue before anything else
 - Specific aims must be discrete, independently testable units
 """

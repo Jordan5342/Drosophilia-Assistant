@@ -6,7 +6,18 @@ import requests
 from pathlib import Path
 from typing import Optional, Dict, List
 import re
-from research_planner import ResearchPlanner, detect_planning_intent, detect_experiment_design_intent
+from evidence_verifier import (
+    format_evidence_review,
+    parse_structured_chat_response,
+    verify_claims,
+)
+from research_planner import (
+    ResearchPlanner,
+    detect_experiment_design_intent,
+    detect_planning_intent,
+    paper_citation_token,
+    validate_answer_citations,
+)
 
 # Configure Entrez
 Entrez.email = "jordanszt@icloud.com"
@@ -41,6 +52,25 @@ def search_flybase_fixed(gene_name: str) -> Optional[Dict]:
 
     print(f"  ℹ️  '{gene_name}' not found in gene database")
     return None
+
+
+def _pubmed_doi(article: Dict) -> str:
+    for identifier in article.get('PubmedData', {}).get('ArticleIdList', []):
+        if getattr(identifier, 'attributes', {}).get('IdType') == 'doi':
+            return str(identifier)
+    return ""
+
+
+def _publication_year(article_data: Dict) -> str:
+    dates = article_data.get('ArticleDate') or []
+    if dates and dates[0].get('Year'):
+        return str(dates[0]['Year'])
+    pub_date = article_data.get('Journal', {}).get('JournalIssue', {}).get('PubDate', {})
+    if pub_date.get('Year'):
+        return str(pub_date['Year'])
+    medline_date = str(pub_date.get('MedlineDate', ''))
+    year_match = re.search(r'\b(19|20)\d{2}\b', medline_date)
+    return year_match.group(0) if year_match else 'N/A'
 
 
 class DrosophilaAssistant:
@@ -133,16 +163,17 @@ class DrosophilaAssistant:
                         if 'LastName' in author:
                             authors.append(f"{author['LastName']} {author.get('Initials', '')}")
                     pmid = str(medline['PMID'])
-                    pub_date = article_data.get('Journal', {}).get('JournalIssue', {}).get('PubDate', {})
-                    year = pub_date.get('Year', 'N/A')
+                    year = _publication_year(article_data)
                     publications.append({
                         'title': title,
                         'authors': ', '.join(authors) + ' et al.' if authors else 'Unknown',
                         'year': year,
+                        'journal': article_data.get('Journal', {}).get('Title', ''),
+                        'doi': _pubmed_doi(article),
                         'pmid': pmid,
                         'abstract': abstract[:500] + '...' if len(abstract) > 500 else abstract,
                         'url': f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
-                        'source': 'FlyBase',
+                        'source': 'FlyBase-linked PubMed',
                     })
                 except Exception:
                     continue
@@ -180,12 +211,13 @@ class DrosophilaAssistant:
                         if 'LastName' in author:
                             authors.append(f"{author['LastName']} {author.get('Initials', '')}")
                     pmid = str(medline['PMID'])
-                    pub_date = article_data.get('Journal', {}).get('JournalIssue', {}).get('PubDate', {})
-                    year = pub_date.get('Year', 'N/A')
+                    year = _publication_year(article_data)
                     publications.append({
                         'title': title,
                         'authors': ', '.join(authors) + ' et al.' if authors else 'Unknown',
                         'year': year,
+                        'journal': article_data.get('Journal', {}).get('Title', ''),
+                        'doi': _pubmed_doi(article),
                         'pmid': pmid,
                         'abstract': abstract[:500] + '...' if len(abstract) > 500 else abstract,
                         'url': f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
@@ -201,7 +233,7 @@ class DrosophilaAssistant:
         """
         Filter and rank papers for relevance using:
         1. Hard filter: must mention Drosophila (drops off-organism papers)
-        2. TF-IDF cosine similarity: ranks remaining papers by semantic
+        2. TF-IDF cosine similarity: ranks remaining papers by lexical
            similarity to the researcher's query — discriminates by rare
            meaningful terms rather than raw keyword counts.
         """
@@ -232,8 +264,8 @@ class DrosophilaAssistant:
 
         # Build query from topic + clarifications + gene names
         # Weight genes more heavily by repeating them
-        gene_str = ' '.join(genes) * 3  # repeat genes for emphasis
-        query = f"{topic} {user_clarifications} {gene_str}".strip()
+        gene_str = ' '.join(genes * 3)  # repeat separated gene terms for emphasis
+        query = ' '.join(part for part in (topic, user_clarifications, gene_str) if part).strip()
 
         # Build corpus: query + all paper texts
         paper_texts = []
@@ -306,15 +338,15 @@ class DrosophilaAssistant:
                     if 'LastName' in author:
                         authors.append(f"{author['LastName']} {author.get('Initials', '')}")
                 pmid = str(medline['PMID'])
-                year = 'N/A'
-                if 'ArticleDate' in article_data and article_data['ArticleDate']:
-                    year = article_data['ArticleDate'][0].get('Year', 'N/A')
+                year = _publication_year(article_data)
                 papers.append({
                     'title': title,
                     'authors': ', '.join(authors) + ' et al.' if authors else 'Unknown',
                     'abstract': abstract[:500] + '...' if len(abstract) > 500 else abstract,
                     'pmid': pmid,
                     'year': year,
+                    'journal': article_data.get('Journal', {}).get('Title', ''),
+                    'doi': _pubmed_doi(article),
                     'url': f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
                     'source': 'PubMed'
                 })
@@ -358,14 +390,25 @@ class DrosophilaAssistant:
         formatted += "RELEVANT PUBLICATIONS - CITE THESE IN YOUR RESPONSE\n"
         formatted += "="*70 + "\n\n"
         for i, paper in enumerate(papers, 1):
-            formatted += f"[{i}] {paper['authors']} ({paper['year']})\n"
+            token = paper_citation_token(paper, i)
+            formatted += f"[{token}] {paper['authors']} ({paper['year']})\n"
             formatted += f"    Title: {paper['title']}\n"
             formatted += f"    URL: {paper['url']}\n"
             formatted += f"    Abstract: {paper['abstract']}\n"
-            formatted += f"    Source: {paper.get('source', 'Unknown')}\n\n"
+            formatted += f"    Source: {paper.get('source', 'Unknown')}\n"
+            if paper.get('journal'):
+                formatted += f"    Journal: {paper['journal']}\n"
+            if paper.get('doi'):
+                formatted += f"    DOI: https://doi.org/{paper['doi']}\n"
+            if isinstance(paper.get('_relevance_score'), (int, float)):
+                formatted += (
+                    "    TF-IDF text-match heuristic (not evidence quality): "
+                    f"{paper['_relevance_score']:.2f}\n"
+                )
+            formatted += "\n"
         formatted += "="*70 + "\n"
-        formatted += "INSTRUCTIONS: Reference these papers in your answer using [1], [2], etc.\n"
-        formatted += "Include the URL links and create a References section at the end\n"
+        formatted += "INSTRUCTIONS: Cite a supported claim using the exact bracketed identifier shown above, e.g. [PMID:12345678].\n"
+        formatted += "Do not create a References section; the application will add verified source metadata.\n"
         formatted += "="*70 + "\n\n"
         return formatted
 
@@ -832,19 +875,16 @@ Your expertise includes:
 - Experimental techniques in fly research
 - Developmental biology and signaling pathways
 
-CRITICAL: When you see "RELEVANT PUBLICATIONS" section with papers listed:
-1. YOU MUST cite these papers throughout your answer
-2. Reference them like: [1], [2], [3], etc.
-3. Create a "References" section at the end listing all papers with links
-4. Format: "[1] Author et al. (Year). Title. [Link](URL)"
-
-IMPORTANT INSTRUCTIONS:
-- Always cite the papers provided - DO NOT ignore them
-- If papers are provided, you MUST reference them multiple times
-- Include clickable links to papers in the References section
-- Be confident citing these papers - they were found for this specific query
-- Include a References section at the end of EVERY response with papers and links
-- If no papers are provided, just answer from your knowledge
+EVIDENCE AND UNCERTAINTY RULES:
+- Treat the current message's RELEVANT PUBLICATIONS block as the only retrieved evidence for this answer. Prior chat text is not a source.
+- Put the exact bracketed source identifier shown in the current publications block immediately after each literature-supported claim (for example, [PMID:12345678]). These identifiers are unique to the current retrieved records and avoid confusing citations from earlier turns.
+- Never invent papers, PMID/DOI values, author names, results, or citation numbers. The application will add source details from retrieved records; do not write a References section yourself.
+- If a point is an inference rather than directly reported evidence, label it as an inference and cite the evidence it builds on. Clearly label proposed experiments and predictions as proposals, not established findings.
+- If a claim is not supported by the supplied title or abstract, say the evidence is insufficient or describe it as unverified instead of stating it as fact.
+- If no publications were retrieved, state that no relevant papers were found. You may offer brief general background only if it is explicitly labeled unverified and do not make paper-specific claims.
+- Do not force citations onto every sentence or claim multiple papers support unless the evidence actually warrants it.
+- Return a JSON object with "answer" (the user-facing prose) and "evidence_claims" (an array of material claims). Each claim object must contain an exact contiguous quote from answer, evidence_type (finding, inference, general_background, proposal, or prediction), and source_ids (the exact PMID/SOURCE identifiers cited by that claim, or []).
+- Include every material factual claim in evidence_claims, including unsupported claims; do not omit one because it lacks a citation. Do not include conversational transitions or advice.
 
 When discussing genes or research:
 - Emphasize genetic pathways and mechanisms
@@ -865,6 +905,17 @@ At the end of responses, if the topic could support a research proposal, add a b
         )
 
         assistant_message = response.content[0].text
+        assistant_message, structured_claims = parse_structured_chat_response(
+            assistant_message
+        )
+        evidence_review = verify_claims(
+            assistant_message,
+            all_papers,
+            self.client,
+            structured_claims=structured_claims,
+        )
+        assistant_message = validate_answer_citations(assistant_message, all_papers)
+        assistant_message += "\n\n" + format_evidence_review(evidence_review)
         self.conversation_history.append({"role": "assistant", "content": assistant_message})
 
         print("✅ Response generated\n" + "="*70 + "\n")

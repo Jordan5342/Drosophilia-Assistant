@@ -36,6 +36,88 @@ def _verified_key_papers(reported_papers: List[Dict], retrieved_papers: List[Dic
     return verified
 
 
+def build_pipeline_proposal(topic: str, literature: Dict, hypothesis: Dict, critic: Dict) -> Dict:
+    """Adapt one-pass agent output to the application's persisted proposal schema."""
+    literature = literature or {}
+    hypothesis = hypothesis or {}
+    critic = critic or {}
+    aims = []
+    for index, aim in enumerate(hypothesis.get("specific_aims") or [], 1):
+        if isinstance(aim, dict):
+            aim_data = dict(aim)
+            aim_data.setdefault("aim_number", index)
+            aim_data.setdefault("title", f"Aim {index}")
+            aim_data.setdefault("objective", aim_data.get("title", ""))
+        else:
+            aim_text = str(aim).strip()
+            title, separator, objective = aim_text.partition("—")
+            aims.append({
+                "aim_number": index,
+                "title": title.strip() or f"Aim {index}",
+                "objective": (objective if separator else aim_text).strip(),
+                "approach": hypothesis.get("experimental_approach", ""),
+                "expected_outcomes": hypothesis.get("expected_outcomes", ""),
+            })
+            continue
+        aims.append(aim_data)
+
+    papers = literature.get("key_papers") or []
+    references = []
+    for number, paper in enumerate(papers, 1):
+        authors = paper.get("authors") or "Unknown"
+        year = paper.get("year") or "N/A"
+        title = paper.get("title") or "No title"
+        journal = paper.get("journal")
+        citation = f"{authors} ({year}). {title}."
+        if journal:
+            citation += f" {journal}."
+        if paper.get("pmid"):
+            citation += f" PMID: {paper['pmid']}."
+        references.append({
+            "number": number,
+            "citation": citation,
+            "url": paper.get("url") or "",
+            "pmid": paper.get("pmid"),
+            "doi": paper.get("doi"),
+            "source": paper.get("source"),
+            "relevance_score": paper.get("_relevance_score"),
+            "relevance": paper.get("relevance", ""),
+        })
+
+    return {
+        "title": f"Research Proposal: {topic}",
+        "background": literature.get("summary", ""),
+        "central_hypothesis": hypothesis.get("hypothesis", ""),
+        "null_hypothesis": "",
+        "rationale": hypothesis.get("novelty_claim", ""),
+        "specific_aims": aims,
+        "experimental_approach": hypothesis.get("experimental_approach", ""),
+        "controls": "",
+        "timeline": [],
+        "fly_lines_needed": hypothesis.get("fly_lines_needed") or [],
+        "literature_findings": {
+            key: literature[key]
+            for key in ("genes", "pathways", "human_orthologs", "disease_context")
+            if literature.get(key)
+        },
+        "literature_gaps": literature.get("identified_gaps") or [],
+        "evidence_claims": [
+            claim
+            for output in (literature, hypothesis)
+            for claim in (output.get("evidence_claims") or [])
+            if isinstance(claim, dict)
+        ],
+        "references": references,
+        "evidence_status": (
+            "retrieved_literature" if references else "no_retrieved_literature"
+        ),
+        "critic_review": critic,
+        "pipeline_status": "partial" if any(
+            result.get("_error") for result in (literature, hypothesis, critic)
+        ) else "complete",
+    }
+
+
 class AgentPipeline:
     def __init__(self, client, fetch_literature_fn):
         """

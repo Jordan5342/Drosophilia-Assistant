@@ -2,6 +2,7 @@ import anthropic
 import json
 import re
 from typing import Any, Optional, Dict, List, Set, Tuple
+from evidence_verifier import format_evidence_review, verify_claims
 
 # Intent keywords that trigger research planning mode (conservative)
 PLANNING_INTENT_STRONG = [
@@ -93,19 +94,93 @@ def _canonical_references(
         authors = paper.get("authors") or "Unknown"
         year = paper.get("year") or "N/A"
         citation = f"{authors} ({year}). {title}."
+        if paper.get("journal"):
+            citation += f" {paper['journal']}."
         if pmid:
             citation += f" PMID: {pmid}."
+        if paper.get("doi"):
+            citation += f" DOI: {paper['doi']}."
 
         url = paper.get("url") or (
             f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/" if pmid.isdigit() else ""
         )
-        references.append({
+        reference = {
             "number": number,
             "citation": citation,
             "url": url,
             "pmid": pmid or None
-        })
+        }
+        for key in ("doi", "source", "_relevance_score"):
+            if paper.get(key) is not None:
+                reference["relevance_score" if key == "_relevance_score" else key] = paper[key]
+        references.append(reference)
     return references
+
+
+def paper_citation_token(paper: Dict, index: int) -> str:
+    pmid = str(paper.get("pmid", "")).strip()
+    return f"PMID:{pmid}" if pmid else f"SOURCE:{index}"
+
+
+def validate_answer_citations(answer: str, papers: List[Dict]) -> str:
+    """Replace model-authored reference lists with citations from retrieved records."""
+    answer = re.sub(
+        r"(?ims)^\s*(?:#{1,3}\s*)?(?:\*\*)?references(?:\*\*)?\s*:?\s*$[\s\S]*$",
+        "",
+        answer,
+    ).rstrip()
+    if not papers:
+        answer = (
+            "**Evidence limitation:** No relevant papers were retrieved. "
+            "Any general background below is unverified and is not a "
+            "paper-specific finding.\n\n"
+            + answer
+        )
+    token_numbers = {
+        paper_citation_token(paper, index): index
+        for index, paper in enumerate(papers, 1)
+    }
+    cited_numbers = set()
+    invalid_markers = []
+
+    def replace_token(match):
+        if match.group(3):
+            invalid_markers.append(match.group(3))
+            return ""
+        token = f"{match.group(1)}:{match.group(2)}"
+        number = token_numbers.get(token)
+        if number is None:
+            invalid_markers.append(token)
+            return ""
+        cited_numbers.add(number)
+        return f"[{number}]"
+
+    answer = re.sub(
+        r"\[(?:(PMID|SOURCE):([A-Za-z0-9._-]+)|(\d+))\]",
+        replace_token,
+        answer,
+    )
+
+    if papers and not cited_numbers:
+        answer += (
+            "\n\n**Evidence limitation:** Retrieved papers were available, but the "
+            "answer did not cite any of them. Treat its factual claims as unverified."
+        )
+    if invalid_markers:
+        answer += (
+            "\n\n**Evidence limitation:** Invalid citation marker(s) were removed "
+            "because they did not match retrieved papers."
+        )
+
+    references = _canonical_references(papers, cited_numbers)
+    if references:
+        answer += "\n\n### References\n"
+        for reference in references:
+            answer += (
+                f"\n[{reference['number']}] {reference['citation']} "
+                f"[Source]({reference['url']})"
+            )
+    return answer
 
 
 def _proposal_citation_numbers(proposal: Dict) -> Set[int]:
@@ -275,12 +350,11 @@ Otherwise ask 2-3 focused questions in a friendly paragraph under 100 words."""
         literature_warning = ""
         if not has_strong_literature:
             literature_warning = """
-IMPORTANT: The literature provided is thin (fewer than 3 papers). This means:
-- Do NOT include uncited generic pathway descriptions — every claim needs a citation
-- You MAY use well-established textbook/review knowledge but you MUST add it to the references section with author and year
-- Be explicit about what is specifically known for this gene/phenotype vs. what is extrapolated from related work
-- Flag major gaps honestly rather than writing around them
-- Suggest specific papers or databases the researcher should consult in the gaps section
+IMPORTANT: The retrieved literature is limited (fewer than 3 papers). This means:
+- Do not invent additional sources or rely on unprovided sources from memory
+- Keep literature claims narrowly tied to the supplied abstracts and cite each factual claim
+- Explicitly label any inference or proposed experimental assumption as unverified
+- State when the available evidence cannot support a conclusion and identify it as a gap
 """
 
         system_prompt = f"""You are an expert Drosophila researcher and scientific writing specialist helping grad students and postdocs build rigorous, specific research proposals.
@@ -289,12 +363,15 @@ Generate a complete research proposal in JSON format. The proposal must be speci
 
 CRITICAL RULES:
 1. Cite papers from the PROVIDED LITERATURE LIST using numeric citations [1], [2], etc. The number must match the paper's position in that list. Do NOT invent citations or add references that are not in the provided list.
-2. Do NOT include unsourced factual statements. If the provided literature does not support a claim, flag it as a literature gap rather than adding a citation from memory.
-3. If literature is thin, flag it honestly: "⚠️ LITERATURE GAP: [specific gap]" and keep that section shorter rather than filling it with textbook knowledge.
-4. Experimental approaches must name SPECIFIC tools: exact GAL4 drivers, specific UAS lines, specific assays with parameters (e.g. "CAFE assay measuring food intake at days 5, 15, 30").
-5. The hypothesis must be falsifiable and specific — not "X affects aging" but "Loss of X in adult fat body neurons will extend median lifespan by >15% through upregulation of autophagy markers Atg1 and Atg8."
-6. Pitfalls must be specific to THIS experiment, not generic lab advice.
-7. Timeline must be realistic for the stated scope.
+2. Cite each factual statement about prior research immediately; a real citation is not proof that the cited abstract supports a claim.
+3. Do NOT include unsourced factual statements as established findings. If the provided literature does not support a claim, mark the gap or state that evidence is insufficient.
+4. Clearly distinguish sourced findings, biological inferences, hypotheses, and proposed experimental choices. Label inferences and proposed choices explicitly.
+5. Never claim that a strain, stock number, interaction, result, or novelty claim has been verified unless the provided literature supports that exact claim.
+6. Experimental approaches may propose specific tools and assays, but label them as proposals requiring independent validation, not established facts.
+7. If literature is thin, flag it honestly and keep literature claims narrow rather than filling gaps from memory.
+8. Pitfalls must be specific to THIS experiment, not generic lab advice.
+9. Timeline must be realistic for the stated scope.
+10. Include every material factual claim in "evidence_claims" as an exact quote from the proposal text, with an evidence_type of finding, inference, general_background, proposal, or prediction, and source_ids containing the exact PMID/SOURCE identifiers for cited papers. Include unsupported factual claims too; do not omit claims because evidence is weak.
 {literature_warning}
 
 Return ONLY valid JSON with this exact structure:
@@ -323,6 +400,9 @@ Return ONLY valid JSON with this exact structure:
     {{"phase": "Phase 3 (Months 11-16)", "milestones": "Specific milestones"}}
   ],
   "literature_gaps": ["Specific gap 1 with why it matters", "Specific gap 2"],
+  "evidence_claims": [
+    {{"claim": "Exact claim text from another proposal field", "evidence_type": "finding|inference|general_background|proposal|prediction", "source_ids": ["PMID or SOURCE token"]}}
+  ],
   "references": [
     {{"number": 1, "citation": "Author et al. (Year). Title. PMID: XXXXX", "url": "https://..."}}
   ]
@@ -396,6 +476,19 @@ REQUIREMENTS:
         valid_numbers = citation_numbers & available_numbers
         proposal = _remove_unverified_citation_markers(proposal, valid_numbers)
         proposal["references"] = _canonical_references(papers[:10], valid_numbers)
+        proposal["evidence_status"] = (
+            "retrieved_literature" if papers else "no_retrieved_literature"
+        )
+        proposal["evidence_review"] = verify_claims(
+            json.dumps({
+                key: value
+                for key, value in proposal.items()
+                if key not in {"references", "evidence_review", "evidence_claims"}
+            }, ensure_ascii=False),
+            papers[:10],
+            self.client,
+            structured_claims=proposal.get("evidence_claims"),
+        )
         self.current_proposal = proposal
         return proposal
 
@@ -482,6 +575,56 @@ Update the proposal accordingly and return the updated version with a changes su
             md.append("\n### Experimental Approach")
             md.append(proposal['experimental_approach'])
 
+        if proposal.get('evidence_status') == 'no_retrieved_literature':
+            md.append(
+                "\n> **Evidence limitation:** No papers were retrieved. "
+                "Treat literature-based claims in this proposal as unverified."
+            )
+        elif proposal.get('evidence_status') == 'retrieved_literature':
+            md.append(
+                "\n> Literature grounding is limited to the retrieved records "
+                "and abstracts. Citation identity is checked, but each source "
+                "should be consulted to confirm claim-level support."
+            )
+
+        if proposal.get('evidence_review'):
+            md.append("\n" + format_evidence_review(proposal["evidence_review"]))
+
+        findings = proposal.get('literature_findings') or {}
+        for label, key in (
+            ("Genes", "genes"),
+            ("Pathways", "pathways"),
+            ("Human Orthologs", "human_orthologs"),
+            ("Disease Context", "disease_context"),
+        ):
+            value = findings.get(key)
+            if value:
+                if isinstance(value, dict):
+                    value = "; ".join(f"{name}: {detail}" for name, detail in value.items())
+                elif isinstance(value, list):
+                    value = "; ".join(
+                        f"{item.get('name', item.get('gene', ''))}: "
+                        f"{item.get('description', item.get('function', ''))}".strip(": ")
+                        if isinstance(item, dict) else str(item)
+                        for item in value
+                    )
+                md.append(f"\n### {label}")
+                md.append(str(value))
+
+        fly_lines = proposal.get('fly_lines_needed') or []
+        if fly_lines:
+            md.append("\n### Fly Lines Needed")
+            for line in fly_lines:
+                if isinstance(line, dict):
+                    detail = f"`{line.get('line', 'Unspecified')}`"
+                    if line.get('purpose'):
+                        detail += f" — {line['purpose']}"
+                    if line.get('source'):
+                        detail += f" (Source: {line['source']})"
+                    md.append(f"- {detail}")
+                else:
+                    md.append(f"- {line}")
+
         if proposal.get('controls'):
             md.append("\n### Controls")
             md.append(proposal['controls'])
@@ -498,6 +641,22 @@ Update the proposal accordingly and return the updated version with a changes su
             for phase in timeline:
                 md.append(f"**{phase.get('phase', '')}:** {phase.get('milestones', '')}")
 
+        review = proposal.get('critic_review') or {}
+        if review:
+            scores = review.get('scores') or {}
+            if scores:
+                md.append("\n### Independent Review")
+                md.append("**Critic scores:** " + " · ".join(
+                    f"{name}: {score}/5" for name, score in scores.items()
+                ))
+            for label, key in (("Issues", "issues"), ("Suggestions", "suggestions")):
+                items = review.get(key) or []
+                if items:
+                    md.append(f"\n**{label}:**")
+                    md.extend(f"- {item}" for item in items)
+            if review.get('reasoning'):
+                md.append(f"\n*{review['reasoning']}*")
+
         refs = proposal.get('references', [])
         if refs:
             md.append("\n### References")
@@ -506,7 +665,19 @@ Update the proposal accordingly and return the updated version with a changes su
                 citation = ref.get('citation', '')
                 num = ref.get('number', '?')
                 if url:
-                    md.append(f"[{num}] {citation} — [Link]({url})")
+                    details = []
+                    if ref.get('source'):
+                        details.append(f"source: {ref['source']}")
+                    if isinstance(ref.get('relevance_score'), (int, float)):
+                        details.append(
+                            f"TF-IDF text-match heuristic: {ref['relevance_score']:.2f}"
+                        )
+                    note = f" ({'; '.join(details)})" if details else ""
+                    doi_link = (
+                        f" — [DOI](https://doi.org/{ref['doi']})"
+                        if ref.get('doi') else ""
+                    )
+                    md.append(f"[{num}] {citation} — [Link]({url}){doi_link}{note}")
                 else:
                     md.append(f"[{num}] {citation}")
 

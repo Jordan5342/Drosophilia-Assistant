@@ -1,4 +1,5 @@
 import importlib
+import json
 import os
 import sys
 import types
@@ -31,6 +32,7 @@ def _import_agent_modules():
 
 
 pipeline_module, planner_module = _import_agent_modules()
+verifier_module = importlib.import_module("evidence_verifier")
 
 
 class PipelineTests(unittest.TestCase):
@@ -169,7 +171,208 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(complete["best_score"], 0)
 
 
+class PipelineProposalTests(unittest.TestCase):
+    def test_pipeline_output_maps_to_persistable_proposal_with_traceable_sources(self):
+        proposal = pipeline_module.build_pipeline_proposal(
+            "sleep regulation",
+            {
+                "summary": "Prior work links sleep to neural circuits.",
+                "pathways": ["circadian clock"],
+                "identified_gaps": ["The cell-specific mechanism is unknown."],
+                "evidence_claims": [{
+                    "claim": "Prior work links sleep to neural circuits.",
+                    "evidence_type": "finding",
+                    "source_ids": ["12345678"],
+                }],
+                "key_papers": [{
+                    "pmid": "12345678",
+                    "title": "Sleep in Drosophila",
+                    "authors": "Author A et al.",
+                    "year": "2024",
+                    "journal": "Fly Journal",
+                    "doi": "10.1234/example",
+                    "url": "https://pubmed.ncbi.nlm.nih.gov/12345678/",
+                    "source": "PubMed",
+                    "_relevance_score": 0.42,
+                }],
+            },
+            {
+                "hypothesis": "Neural circuit X controls sleep.",
+                "specific_aims": ["Map circuit X — Test activity across sleep states"],
+                "experimental_approach": "Use genetic labeling and activity assays.",
+                "fly_lines_needed": [{"line": "UAS-GCaMP", "purpose": "Measure activity"}],
+                "novelty_claim": "Tests a previously untested circuit.",
+                "expected_outcomes": "Circuit activity will correlate with sleep.",
+                "evidence_claims": [{
+                    "claim": "Neural circuit X controls sleep.",
+                    "evidence_type": "prediction",
+                    "source_ids": [],
+                }],
+            },
+            {
+                "scores": {"genetic_feasibility": 4},
+                "issues": ["Validate the driver line."],
+                "suggestions": ["Add an independent driver."],
+                "reasoning": "Promising but needs validation.",
+            },
+        )
+
+        self.assertEqual(proposal["pipeline_status"], "complete")
+        self.assertEqual(proposal["specific_aims"][0]["objective"], "Test activity across sleep states")
+        self.assertEqual(proposal["references"][0]["pmid"], "12345678")
+        self.assertEqual(proposal["references"][0]["doi"], "10.1234/example")
+        self.assertEqual(proposal["references"][0]["source"], "PubMed")
+        self.assertEqual(proposal["references"][0]["relevance_score"], 0.42)
+        self.assertEqual(proposal["evidence_status"], "retrieved_literature")
+        self.assertEqual(proposal["literature_findings"]["pathways"], ["circadian clock"])
+        self.assertEqual(proposal["fly_lines_needed"][0]["line"], "UAS-GCaMP")
+        self.assertEqual(len(proposal["evidence_claims"]), 2)
+
+        planner = planner_module.ResearchPlanner(Mock())
+        markdown = planner.format_proposal_for_chat(proposal)
+        self.assertIn("Independent Review", markdown)
+        self.assertIn("TF-IDF text-match heuristic: 0.42", markdown)
+        self.assertIn("circadian clock", markdown)
+        self.assertIn("UAS-GCaMP", markdown)
+
+    def test_pipeline_proposal_marks_agent_errors_as_partial(self):
+        proposal = pipeline_module.build_pipeline_proposal(
+            "test topic",
+            {"_error": "literature unavailable"},
+            {},
+            {},
+        )
+
+        self.assertEqual(proposal["pipeline_status"], "partial")
+        self.assertEqual(proposal["references"], [])
+
+
+class LiteratureRelevanceTests(unittest.TestCase):
+    def test_gene_terms_are_separated_and_influence_literature_ranking(self):
+        anthropic_stub = types.ModuleType("anthropic")
+        anthropic_stub.Anthropic = object
+        bio_stub = types.ModuleType("Bio")
+        bio_stub.__path__ = []
+        bio_stub.Entrez = types.ModuleType("Bio.Entrez")
+        requests_stub = types.ModuleType("requests")
+        numpy_stub = types.ModuleType("numpy")
+        sklearn_stub = types.ModuleType("sklearn")
+        sklearn_stub.__path__ = []
+        feature_stub = types.ModuleType("sklearn.feature_extraction")
+        feature_stub.__path__ = []
+        text_stub = types.ModuleType("sklearn.feature_extraction.text")
+        metrics_stub = types.ModuleType("sklearn.metrics")
+        metrics_stub.__path__ = []
+        pairwise_stub = types.ModuleType("sklearn.metrics.pairwise")
+
+        class FakeMatrix:
+            def __getitem__(self, _index):
+                return self
+
+        class FakeVectorizer:
+            def __init__(self, **_kwargs):
+                pass
+
+            def fit_transform(self, corpus):
+                self.corpus = corpus
+                FakeVectorizer.query = corpus[0]
+                FakeVectorizer.papers = corpus[1:]
+                return FakeMatrix()
+
+        def fake_cosine_similarity(_query, _papers):
+            scores = [
+                float("foxo" in paper.lower() and "foxo" in FakeVectorizer.query.lower())
+                for paper in FakeVectorizer.papers
+            ]
+            return [scores]
+
+        text_stub.TfidfVectorizer = FakeVectorizer
+        pairwise_stub.cosine_similarity = fake_cosine_similarity
+        stubs = {
+            "anthropic": anthropic_stub,
+            "Bio": bio_stub,
+            "Bio.Entrez": bio_stub.Entrez,
+            "requests": requests_stub,
+            "numpy": numpy_stub,
+            "sklearn": sklearn_stub,
+            "sklearn.feature_extraction": feature_stub,
+            "sklearn.feature_extraction.text": text_stub,
+            "sklearn.metrics": metrics_stub,
+            "sklearn.metrics.pairwise": pairwise_stub,
+        }
+        with patch.dict(sys.modules, stubs):
+            assistant_module = importlib.import_module("drosophila_assistant")
+
+        assistant = object.__new__(assistant_module.DrosophilaAssistant)
+        papers = [
+            {
+                "title": "Drosophila general biology",
+                "abstract": "A general study of fruit fly biology.",
+                "source": "PubMed",
+            },
+            {
+                "title": "Drosophila foxo function",
+                "abstract": "A study of foxo in the fruit fly.",
+                "source": "PubMed",
+            },
+        ]
+
+        with patch.dict(sys.modules, stubs):
+            ranked = assistant.filter_relevant_papers(
+                papers, "zzzzunmatchedtopic", ["foxo"]
+            )
+
+        self.assertEqual(ranked[0]["title"], "Drosophila foxo function")
+        self.assertGreater(ranked[0]["_relevance_score"], ranked[1]["_relevance_score"])
+        self.assertIn("foxo foxo foxo", FakeVectorizer.query)
+
+
 class CitationTests(unittest.TestCase):
+    def test_chat_citations_only_resolve_to_retrieved_records(self):
+        answer = (
+            "The supplied study reports the finding [PMID:12345678]. "
+            "Another claim cites a nonexistent paper [PMID:99999999].\n\n"
+            "### References\n\n[1] Invented authors. Fake paper. [Source](https://fake.example)"
+        )
+        papers = [{
+            "pmid": "12345678",
+            "title": "Retrieved title",
+            "authors": "Author A et al.",
+            "year": "2024",
+            "url": "https://pubmed.ncbi.nlm.nih.gov/12345678/",
+        }]
+
+        result = planner_module.validate_answer_citations(answer, papers)
+
+        self.assertIn("finding [1]", result)
+        self.assertNotIn("99999999", result)
+        self.assertNotIn("fake.example", result)
+        self.assertIn("Invalid citation marker(s) were removed", result)
+        self.assertIn("[1] Author A et al. (2024). Retrieved title.", result)
+        self.assertIn("https://pubmed.ncbi.nlm.nih.gov/12345678/", result)
+
+    def test_chat_rejects_reused_numeric_citation_from_prior_turn(self):
+        result = planner_module.validate_answer_citations(
+            "A claim from this turn [1].",
+            [{
+                "pmid": "12345678",
+                "title": "Retrieved title",
+                "authors": "Author A et al.",
+                "year": "2024",
+            }],
+        )
+
+        self.assertNotIn("[1]", result)
+        self.assertIn("Invalid citation marker(s) were removed", result)
+
+    def test_chat_without_retrieved_papers_discloses_unverified_background(self):
+        result = planner_module.validate_answer_citations(
+            "Here is a brief general overview.", []
+        )
+
+        self.assertIn("No relevant papers were retrieved", result)
+        self.assertIn("is unverified", result)
+
     def test_bibliography_is_numbered_from_retrieved_metadata(self):
         references = planner_module._canonical_references([
             {
@@ -215,4 +418,201 @@ class CitationTests(unittest.TestCase):
             "url": "https://pubmed.ncbi.nlm.nih.gov/12345678/",
             "pmid": "12345678",
         }])
+        self.assertEqual(proposal["evidence_status"], "retrieved_literature")
+        self.assertIn(
+            "Do not invent additional sources",
+            client.messages.create.call_args_list[0].kwargs["system"],
+        )
         self.assertEqual(proposal["background"], "Prior work [1]. Unverified claim .")
+
+    def test_proposal_without_literature_is_marked_unverified(self):
+        client = Mock()
+        client.messages.create.return_value = types.SimpleNamespace(
+            content=[types.SimpleNamespace(
+                text='{"background":"A proposed model.","references":[]}'
+            )]
+        )
+        planner = planner_module.ResearchPlanner(client)
+        proposal = planner.generate_proposal(
+            topic="test topic",
+            genes=[],
+            papers=[],
+        )
+
+        self.assertEqual(proposal["evidence_status"], "no_retrieved_literature")
+        self.assertEqual(proposal["references"], [])
+        self.assertIn(
+            "No papers were retrieved",
+            planner.format_proposal_for_chat(proposal),
+        )
+
+
+class EvidenceVerifierTests(unittest.TestCase):
+    def test_supported_claim_requires_matching_verbatim_abstract_evidence(self):
+        client = Mock()
+        client.messages.create.side_effect = [
+            types.SimpleNamespace(content=[types.SimpleNamespace(text=json.dumps({
+                "claims": [{
+                    "claim": "The study reports a role in sleep regulation [1].",
+                    "evidence_type": "finding",
+                    "source_ids": ["12345678"],
+                }]
+            }))]),
+            types.SimpleNamespace(content=[types.SimpleNamespace(text=json.dumps({
+                "reviews": [{
+                    "claim_id": 1,
+                    "status": "supported",
+                    "source_id": "12345678",
+                    "evidence_quote": "We find that foxo regulates sleep duration in Drosophila.",
+                    "reason": "The abstract directly reports this result.",
+                }]
+            }))]),
+        ]
+        papers = [{
+            "pmid": "12345678",
+            "title": "Sleep regulation in flies",
+            "abstract": "We find that foxo regulates sleep duration in Drosophila.",
+            "url": "https://pubmed.ncbi.nlm.nih.gov/12345678/",
+        }]
+
+        review = verifier_module.verify_claims(
+            "The study reports a role in sleep regulation [1].",
+            papers,
+            client,
+        )
+
+        self.assertEqual(review["status"], "checked")
+        claim = review["claims"][0]
+        self.assertEqual(claim["status"], "supported")
+        self.assertEqual(claim["evidence"]["source_id"], "12345678")
+        self.assertEqual(
+            claim["evidence"]["quote"],
+            "We find that foxo regulates sleep duration in Drosophila.",
+        )
+        self.assertEqual(review["coverage"], {
+            "factual_claims": 1,
+            "assessed_claims": 1,
+            "percent": 100,
+        })
+        self.assertEqual(client.messages.create.call_count, 2)
+        extraction_prompt = client.messages.create.call_args_list[0].kwargs["messages"][0]["content"]
+        self.assertIn('"citation_number": 1', extraction_prompt)
+        self.assertIn('"source_id": "12345678"', extraction_prompt)
+
+    def test_claim_is_uncertain_when_reported_quote_is_not_in_abstract(self):
+        client = Mock()
+        client.messages.create.side_effect = [
+            types.SimpleNamespace(content=[types.SimpleNamespace(text=json.dumps({
+                "claims": [{
+                    "claim": "The study found lifespan extension [1].",
+                    "evidence_type": "finding",
+                    "source_ids": ["12345678"],
+                }]
+            }))]),
+            types.SimpleNamespace(content=[types.SimpleNamespace(text=json.dumps({
+                "reviews": [{
+                    "claim_id": 1,
+                    "status": "supported",
+                    "source_id": "12345678",
+                    "evidence_quote": "foxo extends lifespan by fifty percent.",
+                    "reason": "The abstract describes a lifespan effect.",
+                }]
+            }))]),
+        ]
+
+        review = verifier_module.verify_claims(
+            "The study found lifespan extension [1].",
+            [{
+                "pmid": "12345678",
+                "title": "Sleep regulation in flies",
+                "abstract": "We investigate sleep behavior in Drosophila.",
+            }],
+            client,
+        )
+
+        self.assertEqual(review["status"], "needs_review")
+        self.assertEqual(review["claims"][0]["status"], "uncertain")
+        self.assertIsNone(review["claims"][0]["evidence"])
+
+    def test_omitted_assessment_is_reported_in_claim_coverage(self):
+        client = Mock()
+        client.messages.create.side_effect = [
+            types.SimpleNamespace(content=[types.SimpleNamespace(text=json.dumps({
+                "claims": [
+                    {"claim": "Claim one [1].", "evidence_type": "finding", "source_ids": ["12345678"]},
+                    {"claim": "Claim two [1].", "evidence_type": "finding", "source_ids": ["12345678"]},
+                ]
+            }))]),
+            types.SimpleNamespace(content=[types.SimpleNamespace(text=json.dumps({
+                "reviews": [{
+                    "claim_id": 1,
+                    "status": "not_found",
+                    "source_id": "",
+                    "evidence_quote": "",
+                    "reason": "No support was found.",
+                }]
+            }))]),
+        ]
+
+        review = verifier_module.verify_claims(
+            "Claim one [1]. Claim two [1].",
+            [{"pmid": "12345678", "abstract": "A sufficiently long sentence in this abstract."}],
+            client,
+        )
+
+        self.assertEqual(review["status"], "incomplete")
+        self.assertEqual(review["coverage"], {
+            "factual_claims": 2,
+            "assessed_claims": 1,
+            "percent": 50,
+        })
+        self.assertEqual(review["claims"][1]["status"], "uncertain")
+        self.assertIn("Coverage:** 1/2 factual claims assessed (50%).", verifier_module.format_evidence_review(review))
+
+    def test_structured_claims_are_merged_and_unknown_sources_are_discarded(self):
+        client = Mock()
+        client.messages.create.side_effect = [
+            types.SimpleNamespace(content=[types.SimpleNamespace(text='{"claims":[]}')]),
+            types.SimpleNamespace(content=[types.SimpleNamespace(text=json.dumps({
+                "reviews": [{
+                    "claim_id": 1,
+                    "status": "supported",
+                    "source_id": "12345678",
+                    "evidence_quote": "We find that foxo regulates sleep duration in Drosophila.",
+                    "reason": "The abstract directly reports this result.",
+                }]
+            }))]),
+        ]
+        claim = "The study reports a role in sleep regulation [1]."
+
+        review = verifier_module.verify_claims(
+            claim,
+            [{
+                "pmid": "12345678",
+                "abstract": "We find that foxo regulates sleep duration in Drosophila.",
+            }],
+            client,
+            structured_claims=[{
+                "claim": claim,
+                "evidence_type": "finding",
+                "source_ids": ["12345678", "99999999"],
+            }],
+        )
+
+        self.assertEqual(review["status"], "checked")
+        self.assertEqual(review["claims"][0]["source_ids"], ["12345678"])
+        self.assertEqual(review["coverage"]["percent"], 100)
+
+    def test_checker_failure_is_returned_as_visible_unavailable_state(self):
+        client = Mock()
+        client.messages.create.side_effect = RuntimeError("service unavailable")
+
+        review = verifier_module.verify_claims(
+            "Claim [1].",
+            [{"pmid": "12345678", "title": "Title", "abstract": "Long enough abstract text to check."}],
+            client,
+        )
+
+        self.assertEqual(review["status"], "unavailable")
+        self.assertIn("could not be completed", review["message"])
+        self.assertIn("Treat the answer's factual claims as unverified.", verifier_module.format_evidence_review(review))

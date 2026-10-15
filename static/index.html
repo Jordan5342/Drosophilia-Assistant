@@ -1159,6 +1159,7 @@
                     // Cache proposal JSON in browser for cross-worker resilience
                     if (data.proposal_json) {
                         currentProposalData = data.proposal_json;
+                        localStorage.setItem(`fly-design-proposal:${sessionId}`, JSON.stringify(currentProposalData));
                     }
                     // Extract clean proposal markdown — strip refinement summary prefix if present
                     // Strip refinement prefix: summary text before \n\n---\n\n separator
@@ -1261,10 +1262,14 @@
         const aimNums = [...new Set(aimMatches.map(m => parseInt(m.match(/\d+/)[0])))];
         currentAims = aimNums;
 
-        if (aimNums.length === 0) return;
-
         const selector = document.getElementById('aimSelector');
         const buttons = document.getElementById('aimButtons');
+        if (aimNums.length === 0) {
+            selector.style.display = 'none';
+            buttons.innerHTML = '';
+            return;
+        }
+
         selector.style.display = 'block';
 
         buttons.innerHTML = aimNums.map(n =>
@@ -1708,7 +1713,7 @@
             const res = await fetch(`${API_URL}/export_proposal`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ session_id: sessionId })
+                body: JSON.stringify({ session_id: sessionId, proposal: currentProposalData })
             });
             const data = await res.json();
 
@@ -1748,6 +1753,7 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ session_id: sessionId })
             });
+            localStorage.removeItem(`fly-design-proposal:${sessionId}`);
             localStorage.removeItem('drosophila_session_id');
             location.reload();
             document.getElementById('messages').innerHTML = `
@@ -2027,7 +2033,16 @@
             msg += '**Key Literature:**\n' + keyPapers.map((paper, index) => {
                 const citation = `${paper.authors || 'Unknown'} (${paper.year || 'N/A'}). ${paper.title || 'No title'}.`;
                 const url = paper.url || (paper.pmid ? `https://pubmed.ncbi.nlm.nih.gov/${paper.pmid}/` : '');
-                return url ? `[${index + 1}] ${citation} [View source](${url})` : `[${index + 1}] ${citation}`;
+                const metadata = [
+                    paper.journal,
+                    paper.source ? `Source: ${paper.source}` : '',
+                    Number.isFinite(paper._relevance_score)
+                        ? `text-match heuristic ${paper._relevance_score.toFixed(2)}`
+                        : ''
+                ].filter(Boolean).join(' · ');
+                const doi = paper.doi ? ` [DOI](https://doi.org/${encodeURIComponent(paper.doi)})` : '';
+                const details = metadata ? ` — ${metadata}` : '';
+                return (url ? `[${index + 1}] ${citation} [View source](${url})` : `[${index + 1}] ${citation}`) + doi + details;
             }).join('\n') + '\n\n';
         }
         const scores = critic.scores || {};
@@ -2040,6 +2055,19 @@
         }
 
         addMessage(msg, 'planning', false);
+        if (data.proposal) {
+            currentProposalData = data.proposal;
+            localStorage.setItem(`fly-design-proposal:${sessionId}`, JSON.stringify(currentProposalData));
+            proposalReady = true;
+            enableExportBtn(true);
+            currentDesignAim = null;
+            document.getElementById('exportDesignBtn').style.display = 'none';
+            document.getElementById('printDesignBtn').style.display = 'none';
+            document.getElementById('exportDocxBtn').style.display = 'inline-flex';
+            document.querySelectorAll('.btn-aim').forEach(button => button.classList.remove('active'));
+            renderProposalInPanel(data.proposal_markdown || msg);
+            openProposalPanel();
+        }
     }
 
     // ── Pipeline typing indicator ────────────────────────────────────────────
@@ -2129,31 +2157,37 @@
                 body: JSON.stringify({ session_id: sessionId })
             });
             const histData = await histRes.json();
-            if (!histData.history || histData.history.length === 0) return;
+            if (histData.history && histData.history.length) {
+                const welcome = document.querySelector('.welcome-screen');
+                if (welcome) welcome.remove();
 
-            const welcome = document.querySelector('.welcome-screen');
-            if (welcome) welcome.remove();
-
-            for (const msg of histData.history) {
-                if (msg.role === 'user') {
-                    addMessage(msg.content, 'user');
-                } else {
-                    const isPlanning = msg.content.includes('## 📄') ||
-                                       msg.content.includes('Research Planner');
-                    addMessage(msg.content, isPlanning ? 'planning' : 'assistant');
+                for (const msg of histData.history) {
+                    if (msg.role === 'user') {
+                        addMessage(msg.content, 'user');
+                    } else {
+                        const isPlanning = msg.content.includes('## 📄') ||
+                                           msg.content.includes('Research Planner');
+                        addMessage(msg.content, isPlanning ? 'planning' : 'assistant');
+                    }
                 }
             }
 
-            // Restore export button if a proposal exists
-            const propRes = await fetch(`${API_URL}/export_proposal`, {
+            const cachedProposal = localStorage.getItem(`fly-design-proposal:${sessionId}`);
+            const propRes = await fetch(`${API_URL}/proposal`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ session_id: sessionId })
+                body: JSON.stringify({
+                    session_id: sessionId,
+                    proposal: cachedProposal ? JSON.parse(cachedProposal) : null
+                })
             });
             const propData = await propRes.json();
-            if (propData.status === 'success') {
+            if (propData.proposal) {
+                currentProposalData = propData.proposal;
+                localStorage.setItem(`fly-design-proposal:${sessionId}`, JSON.stringify(currentProposalData));
                 proposalReady = true;
                 enableExportBtn(true);
+                renderProposalInPanel(propData.markdown || '');
             }
         } catch {}
     }

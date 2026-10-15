@@ -1,4 +1,5 @@
 import io
+import json
 import re
 from datetime import datetime
 
@@ -141,6 +142,62 @@ def build_proposal_docx(proposal) -> bytes:
     _centered(doc, datetime.now().strftime('%B %d, %Y'), 11, GRAY, after_pt=24)
     _spacer(doc)
 
+    if proposal.get('evidence_status') == 'no_retrieved_literature':
+        _body(
+            doc,
+            'Evidence limitation: No papers were retrieved. Treat literature-based '
+            'claims in this proposal as unverified.'
+        )
+        _spacer(doc)
+    elif proposal.get('evidence_status') == 'retrieved_literature':
+        _body(
+            doc,
+            'Literature grounding is limited to retrieved records and abstracts. '
+            'Citation identity is checked, but consult each source to confirm '
+            'claim-level support.'
+        )
+        _spacer(doc)
+
+    if proposal.get('evidence_review'):
+        _h1(doc, 'Automated Abstract Evidence Check')
+        review = proposal['evidence_review']
+        _body(doc, review.get('message') or 'No evidence review details are available.')
+        coverage = review.get('coverage') or {}
+        if coverage.get('percent') is None:
+            _body(doc, 'Coverage could not be calculated.')
+        else:
+            _body(
+                doc,
+                f"Coverage: {coverage.get('assessed_claims', 0)}/"
+                f"{coverage.get('factual_claims', 0)} factual claims assessed "
+                f"({coverage['percent']}%)."
+            )
+        if review.get('status') in {'checked', 'needs_review', 'incomplete'}:
+            _body(
+                doc,
+                'This automated check is not a substitute for reading the source '
+                'or expert review.'
+            )
+            for claim in review.get('claims', []):
+                label = {
+                    'supported': 'Abstract evidence found',
+                    'not_found': 'Not found in supplied abstracts',
+                    'uncertain': 'Uncertain',
+                    'not_applicable': 'Proposal or prediction, not a factual claim',
+                }.get(claim.get('status'), 'Uncertain')
+                _bullet(doc, f"{label}: {claim.get('claim', '')}")
+                evidence = claim.get('evidence')
+                if evidence:
+                    _body(doc, f'“{evidence.get("quote", "")}”')
+                    if evidence.get('url'):
+                        p = doc.add_paragraph()
+                        _hyperlink(p, '[Source]', evidence['url'])
+                elif claim.get('reason'):
+                    _body(doc, claim['reason'])
+        elif review.get('status') in {'unavailable', 'no_sources'}:
+            _body(doc, 'Treat literature-based factual claims as unverified.')
+        _spacer(doc)
+
     _h1(doc, 'Background & Significance')
     _body(doc, proposal.get('background') or '')
     _spacer(doc)
@@ -180,9 +237,60 @@ def build_proposal_docx(proposal) -> bytes:
         _body(doc, proposal['experimental_approach'])
         _spacer(doc)
 
+    findings = proposal.get('literature_findings') or {}
+    if findings:
+        _h1(doc, 'Literature Findings')
+        for label, key in (
+            ('Genes', 'genes'),
+            ('Pathways', 'pathways'),
+            ('Human Orthologs', 'human_orthologs'),
+            ('Disease Context', 'disease_context'),
+        ):
+            value = findings.get(key)
+            if value:
+                _h2(doc, label)
+                if isinstance(value, (dict, list)):
+                    _body(doc, json.dumps(value, indent=2, ensure_ascii=False))
+                else:
+                    _body(doc, str(value))
+        _spacer(doc)
+
+    fly_lines = proposal.get('fly_lines_needed') or []
+    if fly_lines:
+        _h1(doc, 'Fly Lines Needed')
+        for line in fly_lines:
+            if isinstance(line, dict):
+                label = line.get('line') or 'Unspecified line'
+                details = [line.get('purpose'), line.get('source')]
+                suffix = ' — ' + ' · '.join(item for item in details if item) if any(details) else ''
+                _bullet(doc, f"{label}{suffix}")
+            else:
+                _bullet(doc, str(line))
+        _spacer(doc)
+
     if proposal.get('controls'):
         _h1(doc, 'Controls')
         _body(doc, proposal['controls'])
+        _spacer(doc)
+
+    review = proposal.get('critic_review') or {}
+    if proposal.get('pipeline_status') == 'partial' or review:
+        _h1(doc, 'Pipeline Review')
+        if proposal.get('pipeline_status') == 'partial':
+            _body(doc, 'Partial result: one or more pipeline agents did not complete successfully.')
+        scores = review.get('scores') or {}
+        if scores:
+            _kv(doc, 'Critic scores', ' · '.join(
+                f"{name}: {score}/5" for name, score in scores.items()
+            ))
+        for label, key in (('Issues', 'issues'), ('Suggestions', 'suggestions')):
+            items = review.get(key) or []
+            if items:
+                _h2(doc, label)
+                for item in items:
+                    _bullet(doc, item)
+        if review.get('reasoning'):
+            _body(doc, review['reasoning'])
         _spacer(doc)
 
     gaps = proposal.get('literature_gaps') or []
@@ -212,7 +320,19 @@ def build_proposal_docx(proposal) -> bytes:
             _run(p, ref.get('citation') or '', 10, GRAY)
             if ref.get('url'):
                 _run(p, ' ', 10, GRAY)
-                _hyperlink(p, '[Link]', ref['url'])
+                _hyperlink(p, '[Source]', ref['url'])
+            if ref.get('doi'):
+                _run(p, ' ', 10, GRAY)
+                _hyperlink(p, '[DOI]', f"https://doi.org/{ref['doi']}")
+            details = []
+            if ref.get('source'):
+                details.append(f"Source: {ref['source']}")
+            if isinstance(ref.get('relevance_score'), (int, float)):
+                details.append(
+                    f"Text-match heuristic: {ref['relevance_score']:.2f} (not evidence quality)"
+                )
+            if details:
+                _run(p, ' ' + ' · '.join(details), 9, GRAY)
 
     buf = io.BytesIO()
     doc.save(buf)

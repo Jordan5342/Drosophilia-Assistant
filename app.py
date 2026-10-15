@@ -9,7 +9,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from drosophila_assistant import DrosophilaAssistant
-from agents.pipeline import AgentPipeline
+from agents.pipeline import AgentPipeline, build_pipeline_proposal
+from evidence_verifier import verify_claims
 import database
 
 DEBUG_AGENTS = os.environ.get("DEBUG_AGENTS", "false").lower() == "true"
@@ -202,6 +203,27 @@ def chat_history():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/proposal', methods=['POST'])
+def get_proposal():
+    try:
+        data = request.get_json()
+        session_id = data.get('session_id', 'default')
+        sess = get_session(session_id)
+        proposal = sess.planner.get_proposal_for_export()
+        if not proposal and data.get('proposal'):
+            proposal = data['proposal']
+            sess.planner.current_proposal = proposal
+            _persist_session(session_id, sess)
+        if not proposal:
+            return jsonify({'error': 'No saved proposal for this session.'}), 404
+        return jsonify({
+            'proposal': proposal,
+            'markdown': sess.planner.format_proposal_for_chat(proposal),
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/export', methods=['POST'])
 def export_conversation():
     try:
@@ -241,6 +263,10 @@ def export_proposal():
 
         session_assistant = get_session(session_id)
         proposal = session_assistant.planner.get_proposal_for_export()
+        if not proposal and data.get('proposal'):
+            proposal = data['proposal']
+            session_assistant.planner.current_proposal = proposal
+            _persist_session(session_id, session_assistant)
 
         if not proposal:
             return jsonify({'error': 'No proposal to export. Generate a proposal first.'}), 404
@@ -386,6 +412,45 @@ def agent_pipeline():
                     genes=genes,
                     debug=DEBUG_AGENTS
                 ):
+                    if event['type'] == 'pipeline_complete':
+                        result = event['data']
+                        literature = result.get('final_literature') or {}
+                        hypothesis = result.get('final_hypothesis') or {}
+                        critic = result.get('final_critic') or {}
+                        proposal = build_pipeline_proposal(
+                            topic, literature, hypothesis, critic
+                        )
+                        papers = literature.get('key_papers', [])
+                        proposal['evidence_review'] = verify_claims(
+                            json.dumps({
+                                key: value
+                                for key, value in proposal.items()
+                                if key not in {'references', 'evidence_review', 'evidence_claims'}
+                            }, ensure_ascii=False),
+                            papers,
+                            session_assistant.client,
+                            structured_claims=proposal.get('evidence_claims'),
+                        )
+                        session_assistant.planner.current_proposal = proposal
+                        session_assistant.planner.set_context_from_chat(
+                            topic, genes, papers, query
+                        )
+                        session_assistant.last_topic = topic
+                        session_assistant.last_genes = genes
+                        session_assistant.last_papers = papers
+                        proposal_markdown = session_assistant.planner.format_proposal_for_chat(
+                            proposal
+                        )
+                        session_assistant.conversation_history.extend([
+                            {'role': 'user', 'content': query},
+                            {'role': 'assistant', 'content': proposal_markdown},
+                        ])
+                        session_assistant.conversation_history = (
+                            session_assistant.conversation_history[-10:]
+                        )
+                        result['proposal'] = proposal
+                        result['proposal_markdown'] = proposal_markdown
+                        _persist_session(session_id, session_assistant)
                     yield f"event: {event['type']}\ndata: {json.dumps(event['data'])}\n\n"
             except Exception as exc:
                 import traceback
