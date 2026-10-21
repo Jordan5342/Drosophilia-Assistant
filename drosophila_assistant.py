@@ -533,6 +533,8 @@ class DrosophilaAssistant:
         for gene in genes[:2]:
             papers = self.search_pubmed(f"{gene} {topic_keywords}", max_results=5)
             add_papers(papers)
+        if not genes:
+            add_papers(self.search_pubmed(f"Drosophila {topic_keywords}", max_results=5))
 
         # Search 3: Topic-specific searches
         clean_clarifs = self.planner.strip_scope_words(user_clarifications) if user_clarifications else ""
