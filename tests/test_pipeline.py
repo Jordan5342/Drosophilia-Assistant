@@ -326,6 +326,34 @@ class LiteratureRelevanceTests(unittest.TestCase):
         self.assertGreater(ranked[0]["_relevance_score"], ranked[1]["_relevance_score"])
         self.assertIn("foxo foxo foxo", FakeVectorizer.query)
 
+    def test_gene_extraction_matches_whole_tokens_only(self):
+        anthropic_stub = types.ModuleType("anthropic")
+        anthropic_stub.Anthropic = object
+        bio_stub = types.ModuleType("Bio")
+        bio_stub.__path__ = []
+        bio_stub.Entrez = types.ModuleType("Bio.Entrez")
+        stubs = {
+            "anthropic": anthropic_stub,
+            "Bio": bio_stub,
+            "Bio.Entrez": bio_stub.Entrez,
+            "requests": types.ModuleType("requests"),
+        }
+        with patch.dict(sys.modules, stubs):
+            assistant_module = importlib.import_module("drosophila_assistant")
+        assistant = object.__new__(assistant_module.DrosophilaAssistant)
+        extract = assistant.extract_gene_names
+
+        # Substrings of ordinary words ("Drosophila" -> dr, "intestinal" -> al) are not genes.
+        self.assertEqual(
+            extract("Hippo pathway dysregulation in intestinal stem cell tumorigenesis in Drosophila midgut"),
+            ["hpo"],
+        )
+        self.assertEqual(extract("Role of yki and wts in Drosophila wing growth"), ["yki", "wts"])
+        self.assertEqual(extract("How does the foxo gene affect lifespan?"), ["foxo"])
+        self.assertEqual(extract("Notch signaling in neuroblast fate"), ["n"])
+        self.assertEqual(extract("Does the how gene regulate muscle attachment?"), ["how"])
+        self.assertEqual(extract("what is sleep"), [])
+
 
 class CitationTests(unittest.TestCase):
     def test_chat_citations_only_resolve_to_retrieved_records(self):

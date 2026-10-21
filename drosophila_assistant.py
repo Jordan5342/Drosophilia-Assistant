@@ -34,6 +34,35 @@ if _gene_db_path.exists():
 else:
     print("⚠️  gene_db.json not found — gene lookup will be limited")
 
+# Many FlyBase symbols are also everyday words ("in", "how", "for", "path").
+# These are skipped unless the text explicitly marks them as a gene.
+_COMMON_WORDS = {
+    'a', 'about', 'after', 'all', 'also', 'an', 'and', 'any', 'are', 'as', 'at', 'be', 'been',
+    'before', 'between', 'both', 'but', 'by', 'can', 'could', 'do', 'does', 'during', 'each',
+    'for', 'from', 'had', 'has', 'have', 'he', 'her', 'him', 'his', 'how', 'if', 'in', 'into',
+    'is', 'it', 'its', 'may', 'me', 'might', 'more', 'most', 'my', 'no', 'not', 'of', 'on',
+    'or', 'other', 'our', 'out', 'over', 'so', 'some', 'such', 'than', 'that', 'the', 'their',
+    'them', 'then', 'there', 'these', 'they', 'this', 'those', 'through', 'to', 'under', 'up',
+    'us', 'was', 'we', 'were', 'what', 'when', 'where', 'which', 'while', 'who', 'why', 'will',
+    'with', 'within', 'would', 'you', 'your', 'tell', 'n', 'e', 'g', 'eg', 'ie', 'al', 'et',
+    'vs', 'via', 'dr', 'mr', 'st', 'fig',
+    # research vocabulary
+    'aging', 'gene', 'genes', 'protein', 'proteins', 'sleep', 'memory', 'behavior', 'cell',
+    'cells', 'path', 'pathway', 'role', 'set', 'red', 'step', 'side', 'link', 'run', 'key',
+    'model', 'test', 'term', 'list', 'lab', 'net', 'level', 'levels', 'cycle', 'clock',
+    'broad', 'dorsal', 'cortex', 'expansion', 'expanded', 'drop', 'flower', 'diamond',
+    'arrow', 'cut', 'loss', 'gain', 'fat', 'body', 'wing', 'eye', 'gut', 'brain', 'stem',
+    'new', 'novel', 'using', 'effect', 'effects', 'fate', 'growth', 'stress', 'signal',
+    'signaling', 'adult', 'larval', 'larva', 'fly', 'flies', 'study', 'mutant', 'mutants',
+}
+
+# Single-word FlyBase gene names ("Notch", "hippo", "yorkie") mapped to their database keys.
+_GENE_NAME_INDEX = {}
+for _key, _entry in _GENE_DB.items():
+    _name = (_entry.get('name') or '').lower()
+    if len(_name) >= 4 and ' ' not in _name and _name not in _COMMON_WORDS:
+        _GENE_NAME_INDEX.setdefault(_name, _key)
+
 
 def search_flybase_fixed(gene_name: str) -> Optional[Dict]:
     gene_lower = gene_name.strip().lower()
@@ -357,30 +386,30 @@ class DrosophilaAssistant:
             return []
 
     def extract_gene_names(self, text: str) -> List[str]:
+        """Return up to 3 gene database keys mentioned in text, in order of appearance.
+
+        Matches whole tokens only (never substrings, so "Drosophila" no longer yields "dr").
+        Symbols that are common words count only when marked as a gene ("the how gene").
+        Full gene names ("Notch", "Yorkie") count when capitalized, since many are plain words.
+        """
+        marked = set()
+        for match in re.findall(r'(?:\bgenes?\s+([\w\-:()]+)|([\w\-:()]+)\s+genes?\b)', text, re.IGNORECASE):
+            marked.add((match[0] or match[1]).lower())
+
         potential_genes = []
-        exclude = {'aging', 'gene', 'genes', 'protein', 'proteins', 'what', 'is', 'are', 'tell',
-                   'me', 'about', 'a', 'n', 'the', 'of', 'in', 'sleep', 'memory', 'behavior'}
-        text_lower = text.lower()
+        for match in re.finditer(r"[A-Za-z0-9][\w\-:().'\[\]]*", text):
+            token = match.group(0)
+            for candidate in (token, token.rstrip(".,;:!?)]'\"")):
+                lower = candidate.lower()
+                if lower in _GENE_DB and len(lower) > 1:
+                    if lower not in _COMMON_WORDS or lower in marked:
+                        potential_genes.append(lower)
+                    break
+                if candidate[:1].isupper() and lower in _GENE_NAME_INDEX:
+                    potential_genes.append(_GENE_NAME_INDEX[lower])
+                    break
 
-        for gene_key in _GENE_DB.keys():
-            if len(gene_key) > 1 and gene_key in text_lower and gene_key not in exclude:
-                potential_genes.append(gene_key)
-
-        pattern = r'(?:gene\s+([a-zA-Z]{2,})|([a-zA-Z]{2,})\s+gene)'
-        matches = re.findall(pattern, text, re.IGNORECASE)
-        for match in matches:
-            gene = match[0] or match[1]
-            if gene.lower() not in exclude and len(gene) > 1:
-                potential_genes.append(gene)
-
-        seen = set()
-        unique = []
-        for g in potential_genes:
-            g_lower = g.lower()
-            if g_lower not in seen and g_lower not in exclude:
-                unique.append(g_lower)
-                seen.add(g_lower)
-
+        unique = list(dict.fromkeys(potential_genes))
         return unique[:3]
 
     def format_papers(self, papers):
