@@ -140,8 +140,12 @@ class GeminiCriticAgent:
                 contents=user_content,
                 config=types.GenerateContentConfig(
                     system_instruction=prompt,
-                    max_output_tokens=800,
+                    max_output_tokens=2000,
                     temperature=0.2,
+                    # Gemini 2.5+ "thinking" models otherwise spend the output budget on
+                    # internal reasoning and truncate the JSON, which then falls back to a
+                    # default score. Rubric scoring needs no thinking budget.
+                    thinking_config=types.ThinkingConfig(thinking_budget=0),
                 ),
             )
             raw = (response.text or "").strip()

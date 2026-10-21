@@ -94,7 +94,7 @@ class LiteratureAgent:
 
         response = self.client.messages.create(
             model=MODEL,
-            max_tokens=2000,
+            max_tokens=8000,
             system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_content}]
         )
