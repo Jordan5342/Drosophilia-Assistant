@@ -35,7 +35,7 @@ import anthropic
 from agents.literature_agent import LiteratureAgent
 from agents.hypothesis_agent import HypothesisAgent
 from agents.gemini_critic_agent import GeminiCriticAgent
-from drosophila_assistant import DrosophilaAssistant
+from drosophila_assistant import DrosophilaAssistant, _GENE_DB
 
 TOPIC_GENERATION_MODEL = "claude-sonnet-4-6"
 
@@ -74,10 +74,30 @@ def generate_topics(client: anthropic.Anthropic, n: int) -> list:
         sys.exit(1)
 
 
-def run_single(assistant: DrosophilaAssistant, lit_agent, hyp_agent, critic_agent, topic: str) -> dict:
+def load_topics(path: str) -> list:
+    """Topics from a previous calibration output ({"results": [{"topic": ...}]}) or a JSON list."""
+    with open(path) as f:
+        data = json.load(f)
+    if isinstance(data, dict):
+        return [r["topic"] for r in data["results"] if r.get("topic")]
+    return list(data)
+
+
+_LEGACY_EXCLUDE = {'aging', 'gene', 'genes', 'protein', 'proteins', 'what', 'is', 'are', 'tell',
+                   'me', 'about', 'a', 'n', 'the', 'of', 'in', 'sleep', 'memory', 'behavior'}
+
+
+def legacy_extract_gene_names(text: str) -> list:
+    """Pre-fix substring matcher ("Drosophila" -> dr), kept only to measure the fix's effect."""
+    text_lower = text.lower()
+    return [k for k in _GENE_DB if len(k) > 1 and k in text_lower and k not in _LEGACY_EXCLUDE][:3]
+
+
+def run_single(assistant: DrosophilaAssistant, lit_agent, hyp_agent, critic_agent, topic: str,
+               extract_genes=None) -> dict:
     print(f"\n{'='*70}\nTOPIC: {topic}\n{'='*70}")
 
-    genes = assistant.extract_gene_names(topic)
+    genes = (extract_genes or assistant.extract_gene_names)(topic)
     print(f"  🧬 Extracted genes: {genes}")
 
     print("  📚 Literature agent: fetching + synthesizing...")
@@ -102,6 +122,7 @@ def run_single(assistant: DrosophilaAssistant, lit_agent, hyp_agent, critic_agen
         "topic": topic,
         "genes": genes,
         "paper_count": len(papers),
+        "papers": [{"pmid": p.get("pmid"), "title": p.get("title"), "source": p.get("source")} for p in papers],
         "literature": lit_output,
         "hypothesis": hyp_output,
         "critic": critic_output,
@@ -112,6 +133,9 @@ def main():
     parser = argparse.ArgumentParser(description="Run a calibration batch of hypotheses through the pipeline.")
     parser.add_argument("--n", type=int, default=10, help="Number of hypotheses to generate (default 10)")
     parser.add_argument("--out", type=str, default="calibration_run.json", help="Output JSON file path")
+    parser.add_argument("--topics-from", type=str, help="Reuse topics from a previous calibration JSON (or a JSON list) instead of generating new ones")
+    parser.add_argument("--gene-extraction", choices=["fixed", "legacy"], default="fixed",
+                        help="'legacy' reproduces the pre-fix substring gene matcher for before/after comparison")
     args = parser.parse_args()
 
     anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
@@ -130,8 +154,14 @@ def main():
     hyp_agent = HypothesisAgent(client)
     critic_agent = GeminiCriticAgent(api_key=gemini_key)
 
-    print(f"🧠 Generating {args.n} varied research topics...")
-    topics = generate_topics(client, args.n)
+    if args.topics_from:
+        topics = load_topics(args.topics_from)[:args.n]
+        print(f"🧠 Reusing {len(topics)} topics from {args.topics_from}")
+    else:
+        print(f"🧠 Generating {args.n} varied research topics...")
+        topics = generate_topics(client, args.n)
+    extract_genes = legacy_extract_gene_names if args.gene_extraction == "legacy" else None
+    print(f"🧬 Gene extraction: {args.gene_extraction}")
     for i, t in enumerate(topics, 1):
         print(f"  {i}. {t}")
 
@@ -139,7 +169,7 @@ def main():
     for i, topic in enumerate(topics, 1):
         print(f"\n\n### Hypothesis {i}/{len(topics)} ###")
         try:
-            result = run_single(assistant, lit_agent, hyp_agent, critic_agent, topic)
+            result = run_single(assistant, lit_agent, hyp_agent, critic_agent, topic, extract_genes)
             result["index"] = i
             results.append(result)
         except Exception as exc:
@@ -149,7 +179,8 @@ def main():
 
     out_path = Path(args.out)
     with open(out_path, "w") as f:
-        json.dump({"generated_at": time.strftime("%Y-%m-%d %H:%M:%S"), "results": results}, f, indent=2)
+        json.dump({"generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                   "gene_extraction": args.gene_extraction, "results": results}, f, indent=2)
 
     print(f"\n\n✅ Done. Wrote {len(results)} entries to {out_path.resolve()}")
 
