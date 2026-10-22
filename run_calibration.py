@@ -35,7 +35,7 @@ import anthropic
 from agents.literature_agent import LiteratureAgent
 from agents.hypothesis_agent import HypothesisAgent
 from agents.gemini_critic_agent import GeminiCriticAgent
-from drosophila_assistant import DrosophilaAssistant, _GENE_DB
+from drosophila_assistant import ANTHROPIC_TIMEOUT_SECONDS, DrosophilaAssistant, _GENE_DB
 
 TOPIC_GENERATION_MODEL = "claude-sonnet-4-6"
 
@@ -148,7 +148,7 @@ def main():
         print("❌ GEMINI_API_KEY not set. Add it to your .env file.")
         sys.exit(1)
 
-    client = anthropic.Anthropic(api_key=anthropic_key)
+    client = anthropic.Anthropic(api_key=anthropic_key, timeout=ANTHROPIC_TIMEOUT_SECONDS)
     assistant = DrosophilaAssistant(api_key=anthropic_key)
     lit_agent = LiteratureAgent(client)
     hyp_agent = HypothesisAgent(client)

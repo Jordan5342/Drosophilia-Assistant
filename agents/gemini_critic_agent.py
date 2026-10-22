@@ -36,6 +36,7 @@ from agents import parse_json_response
 # Gemini 3 Flash is the current recommended free-tier model as of June 2026.
 # If your account/region resolves a different string, override via env var.
 MODEL = os.environ.get("GEMINI_CRITIC_MODEL", "gemini-2.5-flash")
+REQUEST_TIMEOUT_MS = 120_000
 
 REVIEWER_PROMPTS = {
     "hallucination_defense": """\
@@ -123,7 +124,10 @@ RESPOND WITH ONLY VALID JSON:
 
 class GeminiCriticAgent:
     def __init__(self, api_key: str = None):
-        self.client = genai.Client(api_key=api_key or os.environ.get("GEMINI_API_KEY"))
+        self.client = genai.Client(
+            api_key=api_key or os.environ.get("GEMINI_API_KEY"),
+            http_options=types.HttpOptions(timeout=REQUEST_TIMEOUT_MS),
+        )
 
     def run(self, hypothesis_output: Dict, literature_output: Dict, topic: str) -> Dict:
         user_content = f"RESEARCH TOPIC: {topic}\n\n"
@@ -135,6 +139,13 @@ class GeminiCriticAgent:
 
         def call_reviewer(name_and_prompt):
             name, prompt = name_and_prompt
+            try:
+                return name, review(name, prompt)
+            except Exception as exc:
+                print(f"  ⚠️  Critic reviewer {name} failed: {exc}")
+                return name, {"_error": str(exc), "_reviewer": name}
+
+        def review(name, prompt):
             response = self.client.models.generate_content(
                 model=MODEL,
                 contents=user_content,
@@ -143,28 +154,33 @@ class GeminiCriticAgent:
                     max_output_tokens=2000,
                     temperature=0.2,
                     # Gemini 2.5+ "thinking" models otherwise spend the output budget on
-                    # internal reasoning and truncate the JSON, which then falls back to a
-                    # default score. Rubric scoring needs no thinking budget.
+                    # internal reasoning and truncate the JSON, leaving that reviewer with no
+                    # score. Rubric scoring needs no thinking budget.
                     thinking_config=types.ThinkingConfig(thinking_budget=0),
                 ),
             )
             raw = (response.text or "").strip()
             result = parse_json_response(raw, f"gemini_critic_{name}")
             result["_reviewer"] = name
-            return name, result
+            return result
 
         reviews = {}
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
             for name, review in executor.map(call_reviewer, REVIEWER_PROMPTS.items()):
                 reviews[name] = review
 
-        scores = {
-            "hallucination_defense": reviews.get("hallucination_defense", {}).get("score", 3),
-            "genetic_feasibility": reviews.get("genetic_feasibility", {}).get("score", 3),
-            "control_reasoning": reviews.get("control_reasoning", {}).get("score", 3),
-        }
+        # A reviewer that errored or returned unparseable JSON gets no score, rather than a
+        # plausible-looking default that would be indistinguishable from a real review.
+        scores = {}
+        failed_reviewers = []
+        for name in REVIEWER_PROMPTS:
+            score = reviews.get(name, {}).get("score")
+            if isinstance(score, (int, float)) and not isinstance(score, bool) and 1 <= score <= 5:
+                scores[name] = score
+            else:
+                failed_reviewers.append(name)
 
-        all_issues = []
+        all_issues = [f"Critic reviewer '{name}' returned no usable score." for name in failed_reviewers]
         all_suggestions = []
         for review in reviews.values():
             all_issues.extend(review.get("issues", []))
@@ -178,11 +194,15 @@ class GeminiCriticAgent:
 
         # No pass/fail verdict for this calibration round -- scores are
         # descriptive output for human graders, not a routing gate.
-        return {
+        result = {
             "scores": scores,
+            "failed_reviewers": failed_reviewers,
             "issues": all_issues,
             "suggestions": all_suggestions,
             "reasoning": reasoning,
             "reviewer_details": reviews,
             "critic_model": MODEL,
         }
+        if not scores:
+            result["_error"] = "All critic reviewers failed; no scores available."
+        return result

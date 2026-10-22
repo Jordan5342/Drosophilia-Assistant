@@ -171,6 +171,41 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(complete["best_score"], 0)
 
 
+class GeminiCriticTests(unittest.TestCase):
+    def test_failed_reviewers_get_no_score_instead_of_default(self):
+        critic_class = pipeline_module.GeminiCriticAgent
+        fake_types = types.SimpleNamespace(
+            GenerateContentConfig=lambda **kwargs: kwargs,
+            ThinkingConfig=lambda **kwargs: kwargs,
+        )
+        responses = {
+            "hallucination_defense": '{"score": 4, "issues": [], "suggestions": [], "reasoning": "ok"}',
+            "genetic_feasibility": '```json\n{\n  "score": 5,\n  "reasoning": "',  # truncated
+        }
+
+        def generate_content(model, contents, config):
+            name = next(n for n, p in critic_globals["REVIEWER_PROMPTS"].items() if p == config["system_instruction"])
+            if name not in responses:
+                raise TimeoutError("request timed out")
+            return types.SimpleNamespace(text=responses[name])
+
+        critic_globals = critic_class.run.__globals__
+        critic = object.__new__(critic_class)
+        critic.client = types.SimpleNamespace(models=types.SimpleNamespace(generate_content=generate_content))
+        with patch.dict(critic_globals, {"types": fake_types}):
+            result = critic.run({"hypothesis": "h"}, {"summary": "s"}, "topic")
+
+        self.assertEqual(result["scores"], {"hallucination_defense": 4})
+        self.assertEqual(result["failed_reviewers"], ["genetic_feasibility", "control_reasoning"])
+        self.assertNotIn("_error", result)
+
+        responses.clear()
+        with patch.dict(critic_globals, {"types": fake_types}):
+            result = critic.run({"hypothesis": "h"}, {"summary": "s"}, "topic")
+        self.assertEqual(result["scores"], {})
+        self.assertIn("_error", result)
+
+
 class PipelineProposalTests(unittest.TestCase):
     def test_pipeline_output_maps_to_persistable_proposal_with_traceable_sources(self):
         proposal = pipeline_module.build_pipeline_proposal(

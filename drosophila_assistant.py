@@ -1,5 +1,7 @@
 import anthropic
+import functools
 import os
+import urllib.request
 from Bio import Entrez
 import json
 import requests
@@ -22,6 +24,14 @@ from research_planner import (
 # Configure Entrez
 Entrez.email = "jordanszt@icloud.com"
 Entrez.api_key = os.environ.get("NCBI_API_KEY", "")
+
+# Bio.Entrez calls urlopen() with no timeout, so one stalled NCBI request hangs the
+# whole request (or calibration run) forever. Give it a deadline instead.
+NCBI_TIMEOUT_SECONDS = 30
+Entrez.urlopen = functools.partial(urllib.request.urlopen, timeout=NCBI_TIMEOUT_SECONDS)
+
+# Anthropic's default is 10 minutes per call; fail sooner so the UI can report it.
+ANTHROPIC_TIMEOUT_SECONDS = 300.0
 
 # Load full FlyBase gene database at module startup
 _GENE_DB = {}
@@ -104,7 +114,7 @@ def _publication_year(article_data: Dict) -> str:
 
 class DrosophilaAssistant:
     def __init__(self, api_key):
-        self.client = anthropic.Anthropic(api_key=api_key)
+        self.client = anthropic.Anthropic(api_key=api_key, timeout=ANTHROPIC_TIMEOUT_SECONDS)
         self.conversation_history = []
         self.mentioned_genes = set()
         self.last_topic = ""
