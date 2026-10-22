@@ -45,6 +45,8 @@ def _call_json_model(client, prompt: str, max_tokens: int, agent_name: str) -> D
         temperature=0,
         messages=[{"role": "user", "content": prompt}],
     )
+    if getattr(response, "stop_reason", None) == "max_tokens":
+        raise ValueError(f"{agent_name} output was truncated at {max_tokens} tokens")
     result = parse_json_response(response.content[0].text.strip(), agent_name)
     if result.get("_parse_error"):
         raise ValueError(f"{agent_name} returned invalid JSON")
@@ -104,7 +106,7 @@ CURRENT SOURCE IDENTIFIERS AND CITATION NUMBERS:
 ANSWER:
 {text}
 """
-    result = _call_json_model(client, prompt, 1800, "claim_extractor")
+    result = _call_json_model(client, prompt, 4000, "claim_extractor")
     claims = result.get("claims")
     if not isinstance(claims, list):
         raise ValueError("claim extractor returned no claims list")
@@ -228,7 +230,7 @@ FACTUAL CLAIMS TO ASSESS:
 """
 
     try:
-        result = _call_json_model(client, prompt, 1800, "evidence_verifier")
+        result = _call_json_model(client, prompt, 4000, "evidence_verifier")
         if not isinstance(result.get("reviews"), list):
             raise ValueError("evidence verifier returned no reviews list")
     except Exception as exc:
@@ -388,7 +390,7 @@ CLAIMS:
 {json.dumps(unresolved, ensure_ascii=False)}
 """
     try:
-        result = _call_json_model(client, prompt, 1800, "claim_reviser")
+        result = _call_json_model(client, prompt, 4000, "claim_reviser")
         if not isinstance(result.get("revisions"), list):
             raise ValueError("claim reviser returned no revisions list")
         expected = {claim["claim_id"]: claim["claim"] for claim in unresolved}

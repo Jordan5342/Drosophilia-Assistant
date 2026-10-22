@@ -440,7 +440,7 @@ REQUIREMENTS:
 
         response = self.client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=4000,
+            max_tokens=8000,
             system=system_prompt,
             messages=[{"role": "user", "content": user_prompt}]
         )
@@ -530,7 +530,7 @@ Update the proposal accordingly and return the updated version with a changes su
 
         response = self.client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=4000,
+            max_tokens=8000,
             system=system_prompt,
             messages=[{"role": "user", "content": user_prompt}]
         )
@@ -800,7 +800,7 @@ Generate a complete bench-ready protocol. Be specific about genotypes, timing, a
 
         response = self.client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=4000,
+            max_tokens=8000,
             system=system_prompt,
             messages=[{"role": "user", "content": user_prompt}]
         )

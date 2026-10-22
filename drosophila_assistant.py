@@ -957,7 +957,7 @@ At the end of responses, if the topic could support a research proposal, add a b
         print("🤖 Calling Claude...")
         response = self.client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=3000,
+            max_tokens=6000,
             system=system_prompt,
             messages=self.conversation_history
         )
