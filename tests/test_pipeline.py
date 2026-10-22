@@ -393,6 +393,9 @@ class LiteratureRelevanceTests(unittest.TestCase):
         query = assistant.build_chat_search_query
         self.assertEqual(query("tell me about FOX genes in Drosophila"), "forkhead")
         self.assertEqual(query("tell me about fox gene in drosophilia"), "forkhead")
+        self.assertEqual(query("tell me abt fox genes"), "forkhead")
+        # Recognized family terms lead, so dropping trailing terms removes unknown words first.
+        self.assertEqual(query("insulin regulation of FOX genes"), "forkhead insulin regulation")
         self.assertEqual(query("What is the role of Hox genes in segment identity?"), "homeotic segment identity")
         self.assertEqual(query("How does insulin affect lifespan?"), "insulin affect lifespan")
 

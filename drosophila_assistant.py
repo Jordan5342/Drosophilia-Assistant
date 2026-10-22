@@ -360,6 +360,7 @@ class DrosophilaAssistant:
     _CHAT_FILLER_WORDS = {
         'explain', 'describe', 'know', 'please', 'give', 'overview', 'show', 'find',
         'drosophila', 'melanogaster', 'family', 'families',
+        'abt', 'pls', 'plz', 'u', 'ur', 'thx', 'wat', 'wht', 'hw', 'info',
     }
 
     def build_chat_search_query(self, message: str) -> str:
@@ -367,7 +368,7 @@ class DrosophilaAssistant:
 
         PubMed ANDs every word, so conversational filler otherwise returns nothing.
         """
-        terms = []
+        family_terms, terms = [], []
         for word in re.findall(r"[A-Za-z0-9][\w\-]*", message):
             lower = word.lower()
             # Searches are already restricted to Drosophila; "dros..." also drops misspellings
@@ -375,8 +376,12 @@ class DrosophilaAssistant:
             if lower in _COMMON_WORDS or lower in self._CHAT_FILLER_WORDS or lower.startswith("dros"):
                 continue
             family = self._GENE_FAMILY_TERMS.get(lower)
-            terms.append(family or word)
-        return " ".join(terms) or message
+            if family:
+                family_terms.append(family)
+            else:
+                terms.append(word)
+        # Recognized family terms lead, so callers that drop trailing terms keep them longest.
+        return " ".join(family_terms + terms) or message
 
     def search_pubmed(self, query, max_results=5):
         try:
@@ -927,14 +932,18 @@ class DrosophilaAssistant:
         num_needed = self.determine_paper_count(user_message)
         if len(all_papers) < num_needed:
             print(f"  Supplementing with PubMed...")
-            # PubMed ANDs every term, so one typo or rare word empties the results;
-            # drop trailing terms until something matches.
+            # PubMed ANDs every term, so one typo or rare word narrows the results to a few
+            # stray matches; drop trailing terms and keep searching until enough papers match.
             terms = self.build_chat_search_query(user_message).split()
             pubmed_papers = []
-            while terms and not pubmed_papers:
-                pubmed_papers = self.search_pubmed(
-                    " ".join(terms), max_results=num_needed - len(all_papers)
-                )
+            while terms and len(pubmed_papers) < num_needed - len(all_papers):
+                seen = {p.get('pmid') for p in all_papers + pubmed_papers}
+                pubmed_papers += [
+                    p for p in self.search_pubmed(
+                        " ".join(terms), max_results=num_needed - len(all_papers) - len(pubmed_papers)
+                    )
+                    if p.get('pmid') not in seen
+                ]
                 terms = terms[:-1]
             if pubmed_papers:
                 all_papers.extend(pubmed_papers)
