@@ -392,6 +392,7 @@ class LiteratureRelevanceTests(unittest.TestCase):
         # Chat questions become PubMed terms without filler words that PubMed would AND together.
         query = assistant.build_chat_search_query
         self.assertEqual(query("tell me about FOX genes in Drosophila"), "forkhead")
+        self.assertEqual(query("tell me about fox gene in drosophilia"), "forkhead")
         self.assertEqual(query("What is the role of Hox genes in segment identity?"), "homeotic segment identity")
         self.assertEqual(query("How does insulin affect lifespan?"), "insulin affect lifespan")
 

@@ -370,7 +370,9 @@ class DrosophilaAssistant:
         terms = []
         for word in re.findall(r"[A-Za-z0-9][\w\-]*", message):
             lower = word.lower()
-            if lower in _COMMON_WORDS or lower in self._CHAT_FILLER_WORDS:
+            # Searches are already restricted to Drosophila; "dros..." also drops misspellings
+            # like "drosophilia", which PubMed would otherwise require to match.
+            if lower in _COMMON_WORDS or lower in self._CHAT_FILLER_WORDS or lower.startswith("dros"):
                 continue
             family = self._GENE_FAMILY_TERMS.get(lower)
             terms.append(family or word)
@@ -925,9 +927,15 @@ class DrosophilaAssistant:
         num_needed = self.determine_paper_count(user_message)
         if len(all_papers) < num_needed:
             print(f"  Supplementing with PubMed...")
-            pubmed_papers = self.search_pubmed(
-                self.build_chat_search_query(user_message), max_results=num_needed - len(all_papers)
-            )
+            # PubMed ANDs every term, so one typo or rare word empties the results;
+            # drop trailing terms until something matches.
+            terms = self.build_chat_search_query(user_message).split()
+            pubmed_papers = []
+            while terms and not pubmed_papers:
+                pubmed_papers = self.search_pubmed(
+                    " ".join(terms), max_results=num_needed - len(all_papers)
+                )
+                terms = terms[:-1]
             if pubmed_papers:
                 all_papers.extend(pubmed_papers)
 
