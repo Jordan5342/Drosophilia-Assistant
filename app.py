@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+from Bio import Entrez
 from drosophila_assistant import DrosophilaAssistant
 from agents.pipeline import AgentPipeline, build_pipeline_proposal
 from evidence_verifier import verify_and_revise_claims
@@ -486,8 +487,22 @@ def agent_pipeline():
 
 @app.route('/api/health', methods=['GET'])
 def health():
+    diagnostics = {}
+    if request.args.get('check') == 'pubmed':
+        # Searches swallow NCBI errors (they look like "no papers"), so check directly.
+        try:
+            handle = Entrez.esearch(db="pubmed", term="Drosophila AND forkhead", retmax=1)
+            record = Entrez.read(handle)
+            handle.close()
+            diagnostics['pubmed'] = {'ok': True, 'result_count': record.get('Count')}
+        except Exception as exc:
+            diagnostics['pubmed'] = {'ok': False, 'error': f"{type(exc).__name__}: {exc}"}
+        diagnostics['ncbi_api_key_set'] = bool(os.environ.get("NCBI_API_KEY", "").strip())
+        diagnostics['deployed_commit'] = os.environ.get("RENDER_GIT_COMMIT", "unknown")[:7]
+
     return jsonify({
         'status': 'healthy',
+        **diagnostics,
         'api_configured': assistant is not None,
         'critic_configured': bool(os.environ.get("GEMINI_API_KEY")),
         'features': {
