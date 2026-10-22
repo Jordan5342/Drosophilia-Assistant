@@ -50,14 +50,36 @@ def _find_verbatim_evidence(quote: str, source_id: str, papers: List[Dict]):
     return None
 
 
-def _call_json_model(client, prompt: str, max_tokens: int, agent_name: str) -> Dict:
+# Claims are exact quotes, and quotes inside them ('The name "FOX"...') were sometimes
+# left unescaped in free-text JSON. A forced tool call returns an already-parsed object.
+_JSON_TOOL_NAME = "submit_result"
+
+
+def _call_json_model(client, prompt: str, max_tokens: int, agent_name: str, list_key: str) -> Dict:
+    """Return the model's JSON object, which must contain a list under list_key."""
+    tool = {
+        "name": _JSON_TOOL_NAME,
+        "description": "Submit the requested JSON object.",
+        "input_schema": {
+            "type": "object",
+            "properties": {list_key: {"type": "array", "items": {"type": "object"}}},
+            "required": [list_key],
+        },
+    }
     response = client.messages.create(
         model=MODEL,
         max_tokens=max_tokens,
         messages=[{"role": "user", "content": prompt}],
+        tools=[tool],
+        tool_choice={"type": "tool", "name": _JSON_TOOL_NAME},
     )
     if getattr(response, "stop_reason", None) == "max_tokens":
         raise ValueError(f"{agent_name} output was truncated at {max_tokens} tokens")
+    tool_use = next(
+        (block for block in response.content if getattr(block, "type", None) == "tool_use"), None
+    )
+    if tool_use is not None and isinstance(tool_use.input, dict):
+        return tool_use.input
     result = parse_json_response(response.content[0].text.strip(), agent_name)
     if result.get("_parse_error"):
         raise ValueError(f"{agent_name} returned invalid JSON")
@@ -117,7 +139,7 @@ CURRENT SOURCE IDENTIFIERS AND CITATION NUMBERS:
 ANSWER:
 {text}
 """
-    result = _call_json_model(client, prompt, 4000, "claim_extractor")
+    result = _call_json_model(client, prompt, 4000, "claim_extractor", "claims")
     claims = result.get("claims")
     if not isinstance(claims, list):
         raise ValueError("claim extractor returned no claims list")
@@ -241,7 +263,7 @@ FACTUAL CLAIMS TO ASSESS:
 """
 
     try:
-        result = _call_json_model(client, prompt, 4000, "evidence_verifier")
+        result = _call_json_model(client, prompt, 4000, "evidence_verifier", "reviews")
         if not isinstance(result.get("reviews"), list):
             raise ValueError("evidence verifier returned no reviews list")
     except Exception as exc:
@@ -263,15 +285,13 @@ FACTUAL CLAIMS TO ASSESS:
             } | {"status": "not_applicable", "evidence": None})
             continue
 
+        # Claims paraphrased from tables or lists are still assessed; "verbatim" only
+        # controls whether the claim's text can be located for automatic revision.
         item = reviews_by_id.get(claim["claim_id"])
-        if item is None or not claim["claim_valid"]:
+        if item is None:
             status = "uncertain"
             evidence = None
-            reason = (
-                "The generated claim was not a verbatim excerpt from the answer."
-                if not claim["claim_valid"]
-                else "No evidence assessment was returned for this claim."
-            )
+            reason = "No evidence assessment was returned for this claim."
         else:
             assessed_count += 1
             status = item.get("status")
@@ -298,6 +318,7 @@ FACTUAL CLAIMS TO ASSESS:
             "status": status,
             "evidence": evidence,
             "reason": reason,
+            "verbatim": claim["claim_valid"],
         })
 
     review_by_id = {claim["claim_id"]: claim for claim in verified_claims}
@@ -348,11 +369,22 @@ def create_claim_revisions(review: Dict, papers: List[Dict], client) -> Tuple[Di
             "message": "Claims were not revised because the initial evidence check was unavailable.",
         }
 
-    unresolved = [
+    unresolved_all = [
         claim for claim in review.get("claims", [])
         if claim.get("evidence_type") in FACTUAL_TYPES
         and claim.get("status") != "supported"
     ]
+    # A paraphrased claim cannot be located in the answer, so it stays marked rather
+    # than rewritten (one unmatched replacement would otherwise void the whole revision).
+    unresolved = [claim for claim in unresolved_all if claim.get("verbatim", True)]
+    if unresolved_all and not unresolved:
+        return {}, {
+            "status": "not_revisable",
+            "message": (
+                f"{len(unresolved_all)} unsupported or uncertain claim(s) were paraphrased from "
+                "tables or lists and could not be located for rewriting; they remain marked above."
+            ),
+        }
     if not unresolved:
         return {}, {
             "status": "not_needed",
@@ -401,7 +433,7 @@ CLAIMS:
 {json.dumps(unresolved, ensure_ascii=False)}
 """
     try:
-        result = _call_json_model(client, prompt, 4000, "claim_reviser")
+        result = _call_json_model(client, prompt, 4000, "claim_reviser", "revisions")
         if not isinstance(result.get("revisions"), list):
             raise ValueError("claim reviser returned no revisions list")
         expected = {claim["claim_id"]: claim["claim"] for claim in unresolved}
@@ -428,9 +460,13 @@ CLAIMS:
             "message": "Unsupported claims were left unchanged because a complete revision could not be validated.",
         }
 
+    message = f"Revised {len(replacements)} unsupported or uncertain factual claim(s); the revised content will be checked again."
+    skipped = len(unresolved_all) - len(unresolved)
+    if skipped:
+        message += f" {skipped} paraphrased claim(s) could not be located for rewriting and remain marked."
     return replacements, {
         "status": "applied",
-        "message": f"Revised {len(replacements)} unsupported or uncertain factual claim(s); the revised content will be checked again.",
+        "message": message,
         "revised_claims": len(replacements),
     }
 
@@ -503,11 +539,18 @@ def verify_and_revise_claims(
     revised_structured_claims, _ = apply_claim_revisions(
         structured_claims or [], replacements
     )
+    # Re-extraction can silently skip claims (e.g. table rows), so every factual claim
+    # that was not rewritten is carried into the recheck explicitly.
+    carried_claims = [
+        {key: claim[key] for key in ("claim", "evidence_type", "source_ids")}
+        for claim in review.get("claims", [])
+        if claim.get("evidence_type") in FACTUAL_TYPES and claim["claim"] not in replacements
+    ]
     final_review = verify_claims(
         revised_text,
         papers,
         client,
-        structured_claims=revised_structured_claims,
+        structured_claims=list(revised_structured_claims) + carried_claims,
     )
     if final_review.get("status") in {"unavailable", "no_sources", "no_claims", "incomplete"}:
         revision["message"] = (

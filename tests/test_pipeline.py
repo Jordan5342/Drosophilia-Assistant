@@ -535,10 +535,11 @@ class EvidenceVerifierTests(unittest.TestCase):
 
         # Mirrors the SDK signature: Mock() accepted an unsupported temperature argument
         # that the real client rejects, which disabled every evidence check.
-        def create(*, model, max_tokens, messages, system=None):
+        def create(*, model, max_tokens, messages, system=None, tools=None, tool_choice=None):
+            self.assertEqual(tool_choice["name"], tools[0]["name"])
             return types.SimpleNamespace(
-                stop_reason="end_turn",
-                content=[types.SimpleNamespace(text=json.dumps(responses.pop(0)))],
+                stop_reason="tool_use",
+                content=[types.SimpleNamespace(type="tool_use", input=responses.pop(0))],
             )
 
         client = types.SimpleNamespace(messages=types.SimpleNamespace(create=create))
@@ -556,6 +557,42 @@ class EvidenceVerifierTests(unittest.TestCase):
 
         self.assertEqual(review["coverage"]["assessed_claims"], 1)
         self.assertEqual(review["claims"][0]["status"], "supported")
+
+    def test_paraphrased_claims_are_assessed_and_survive_revision_recheck(self):
+        answer = "| Gene | Role |\n|---|---|\n| *jumu* | Heart |\n\nThe *fkh* gene controls gut development."
+        table_claim = "jumu plays a role in the heart"
+        prose_claim = "The fkh gene controls gut development."
+        calls = []
+
+        def create(*, model, max_tokens, messages, system=None, tools=None, tool_choice=None):
+            prompt = messages[0]["content"]
+            calls.append(prompt)
+            if prompt.startswith("Extract every"):
+                # The recheck's extraction omits the table claim, as the model did in practice.
+                claims = [{"claim": table_claim, "evidence_type": "general_background", "source_ids": []}]
+                if len(calls) == 1:
+                    claims.append({"claim": prose_claim, "evidence_type": "general_background", "source_ids": []})
+                else:
+                    claims = [{"claim": "Whether the fkh gene controls gut development is not established.",
+                               "evidence_type": "general_background", "source_ids": []}]
+                payload = {"claims": claims}
+            elif prompt.startswith("Assess EVERY"):
+                ids = [item["claim_id"] for item in json.loads(prompt.split("FACTUAL CLAIMS TO ASSESS:\n", 1)[1])]
+                payload = {"reviews": [{"claim_id": i, "status": "not_found", "source_id": "", "evidence_quote": "", "reason": "x"} for i in ids]}
+            else:
+                ids = [item["claim_id"] for item in json.loads(prompt.split("CLAIMS:\n", 1)[1])]
+                payload = {"revisions": [{"claim_id": i, "revised_claim": "Whether the fkh gene controls gut development is not established."} for i in ids]}
+            return types.SimpleNamespace(stop_reason="tool_use", content=[types.SimpleNamespace(type="tool_use", input=payload)])
+
+        client = types.SimpleNamespace(messages=types.SimpleNamespace(create=create))
+        papers = [{"pmid": "1", "title": "t", "abstract": "Unrelated."}]
+        revised, review = verifier_module.verify_and_revise_claims(answer, papers, client)
+
+        self.assertIn("is not established", revised)
+        self.assertIn("could not be located", review["revision"]["message"])
+        statuses = {claim["claim"]: claim["status"] for claim in review["claims"]}
+        self.assertEqual(statuses[table_claim], "not_found")
+        self.assertEqual(review["coverage"]["assessed_claims"], review["coverage"]["factual_claims"])
 
     def test_supported_claim_requires_matching_verbatim_abstract_evidence(self):
         client = Mock()
