@@ -65,14 +65,14 @@ Edit `.env` and add the keys you need:
 ```
 ANTHROPIC_API_KEY=
 GEMINI_API_KEY=
-GEMINI_CRITIC_MODEL=gemini-3-flash
+GEMINI_CRITIC_MODEL=gemini-2.5-flash
 DATABASE_URL=
 ```
 
 - `ANTHROPIC_API_KEY` is required for chat and proposal generation.
 - `GEMINI_API_KEY` is required to run the independent AI critic pipeline.
 - `DATABASE_URL` is optional; set it to a PostgreSQL connection string (for example, from Supabase) to enable persistence. Without it, the app runs without database persistence.
-- `GEMINI_CRITIC_MODEL` is optional and defaults to `gemini-3-flash`.
+- `GEMINI_CRITIC_MODEL` is optional and defaults to `gemini-2.5-flash`.
 
 The application loads `.env` automatically. Keep real keys in `.env` or your deployment's secret settings; do not commit them.
 
