@@ -517,6 +517,46 @@ class CitationTests(unittest.TestCase):
 
 
 class EvidenceVerifierTests(unittest.TestCase):
+    def test_markdown_answer_claims_are_checked_with_sdk_parameters_only(self):
+        responses = [
+            {"claims": [{
+                "claim": "The study reports that foxo regulates sleep in Drosophila [1].",
+                "evidence_type": "finding",
+                "source_ids": ["12345678"],
+            }]},
+            {"reviews": [{
+                "claim_id": 1,
+                "status": "supported",
+                "source_id": "12345678",
+                "evidence_quote": "We find that foxo regulates sleep duration in Drosophila.",
+                "reason": "Directly reported.",
+            }]},
+        ]
+
+        # Mirrors the SDK signature: Mock() accepted an unsupported temperature argument
+        # that the real client rejects, which disabled every evidence check.
+        def create(*, model, max_tokens, messages, system=None):
+            return types.SimpleNamespace(
+                stop_reason="end_turn",
+                content=[types.SimpleNamespace(text=json.dumps(responses.pop(0)))],
+            )
+
+        client = types.SimpleNamespace(messages=types.SimpleNamespace(create=create))
+        papers = [{
+            "pmid": "12345678",
+            "title": "Sleep regulation in flies",
+            "abstract": "We find that foxo regulates sleep duration in Drosophila.",
+        }]
+
+        review = verifier_module.verify_claims(
+            "The study reports that ***foxo*** regulates sleep in *Drosophila* [1].",
+            papers,
+            client,
+        )
+
+        self.assertEqual(review["coverage"]["assessed_claims"], 1)
+        self.assertEqual(review["claims"][0]["status"], "supported")
+
     def test_supported_claim_requires_matching_verbatim_abstract_evidence(self):
         client = Mock()
         client.messages.create.side_effect = [

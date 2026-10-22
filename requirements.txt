@@ -1,4 +1,4 @@
-anthropic>=0.39.0
+anthropic>=2.1.0,<3
 google-genai>=1.0.0
 psycopg2-binary>=2.9.0
 biopython>=1.84

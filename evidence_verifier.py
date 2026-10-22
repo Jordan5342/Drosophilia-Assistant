@@ -11,8 +11,20 @@ FACTUAL_TYPES = {"finding", "inference", "general_background"}
 MAX_AUTO_REVISED_CLAIMS = 10
 
 
+# Answers are Markdown ("**FOX** genes in *Drosophila*") while extracted claims are plain
+# text, so emphasis markers are ignored when matching claims to the answer.
+_MARKDOWN_EMPHASIS = "*`"
+
+
 def _normalize_evidence_text(text: str) -> str:
+    text = text.translate({ord(char): None for char in _MARKDOWN_EMPHASIS})
     return " ".join(text.casefold().split())
+
+
+def _claim_pattern(claim: str) -> str:
+    """Regex for claim text that tolerates Markdown emphasis markers between characters."""
+    gap = "[" + re.escape(_MARKDOWN_EMPHASIS) + "]*"
+    return gap.join(re.escape(char) for char in claim)
 
 
 def _find_verbatim_evidence(quote: str, source_id: str, papers: List[Dict]):
@@ -42,7 +54,6 @@ def _call_json_model(client, prompt: str, max_tokens: int, agent_name: str) -> D
     response = client.messages.create(
         model=MODEL,
         max_tokens=max_tokens,
-        temperature=0,
         messages=[{"role": "user", "content": prompt}],
     )
     if getattr(response, "stop_reason", None) == "max_tokens":
@@ -430,14 +441,15 @@ def apply_claim_revisions(content: Any, replacements: Dict[str, str]) -> Tuple[A
         return content, False
 
     matched = set()
+    claims = sorted(replacements, key=len, reverse=True)
     pattern = re.compile(
-        "|".join(re.escape(claim) for claim in sorted(replacements, key=len, reverse=True))
+        "|".join(f"(?P<c{index}>{_claim_pattern(claim)})" for index, claim in enumerate(claims))
     )
 
     def replace(value: Any) -> Any:
         if isinstance(value, str):
             def replace_match(match):
-                original = match.group(0)
+                original = claims[int(match.lastgroup[1:])]
                 matched.add(original)
                 return replacements[original]
 
