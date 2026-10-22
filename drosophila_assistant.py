@@ -351,6 +351,31 @@ class DrosophilaAssistant:
 
         return drosophila_papers
 
+    # Gene-family nicknames that PubMed matches poorly ("FOX" also matches authors named Fox),
+    # mapped to the term papers use.
+    _GENE_FAMILY_TERMS = {
+        'fox': 'forkhead',
+        'hox': 'homeotic',
+    }
+    _CHAT_FILLER_WORDS = {
+        'explain', 'describe', 'know', 'please', 'give', 'overview', 'show', 'find',
+        'drosophila', 'melanogaster', 'family', 'families',
+    }
+
+    def build_chat_search_query(self, message: str) -> str:
+        """Turn a chat question into PubMed search terms ("tell me about FOX genes" -> "forkhead").
+
+        PubMed ANDs every word, so conversational filler otherwise returns nothing.
+        """
+        terms = []
+        for word in re.findall(r"[A-Za-z0-9][\w\-]*", message):
+            lower = word.lower()
+            if lower in _COMMON_WORDS or lower in self._CHAT_FILLER_WORDS:
+                continue
+            family = self._GENE_FAMILY_TERMS.get(lower)
+            terms.append(family or word)
+        return " ".join(terms) or message
+
     def search_pubmed(self, query, max_results=5):
         try:
             full_query = f"Drosophila AND ({query})"
@@ -900,7 +925,9 @@ class DrosophilaAssistant:
         num_needed = self.determine_paper_count(user_message)
         if len(all_papers) < num_needed:
             print(f"  Supplementing with PubMed...")
-            pubmed_papers = self.search_pubmed(user_message, max_results=num_needed - len(all_papers))
+            pubmed_papers = self.search_pubmed(
+                self.build_chat_search_query(user_message), max_results=num_needed - len(all_papers)
+            )
             if pubmed_papers:
                 all_papers.extend(pubmed_papers)
 

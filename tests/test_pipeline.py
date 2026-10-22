@@ -389,6 +389,12 @@ class LiteratureRelevanceTests(unittest.TestCase):
         self.assertEqual(extract("Does the how gene regulate muscle attachment?"), ["how"])
         self.assertEqual(extract("what is sleep"), [])
 
+        # Chat questions become PubMed terms without filler words that PubMed would AND together.
+        query = assistant.build_chat_search_query
+        self.assertEqual(query("tell me about FOX genes in Drosophila"), "forkhead")
+        self.assertEqual(query("What is the role of Hox genes in segment identity?"), "homeotic segment identity")
+        self.assertEqual(query("How does insulin affect lifespan?"), "insulin affect lifespan")
+
 
 class CitationTests(unittest.TestCase):
     def test_chat_citations_only_resolve_to_retrieved_records(self):
