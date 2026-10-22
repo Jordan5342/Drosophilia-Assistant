@@ -12,6 +12,6 @@ services:
       - key: DATABASE_URL
         sync: false
       - key: GEMINI_CRITIC_MODEL
-        value: gemini-3-flash
+        value: gemini-2.5-flash
       - key: PYTHON_VERSION
         value: 3.11.0

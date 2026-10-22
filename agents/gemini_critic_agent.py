@@ -35,7 +35,7 @@ from agents import parse_json_response
 
 # Gemini 3 Flash is the current recommended free-tier model as of June 2026.
 # If your account/region resolves a different string, override via env var.
-MODEL = os.environ.get("GEMINI_CRITIC_MODEL", "gemini-3-flash")
+MODEL = os.environ.get("GEMINI_CRITIC_MODEL", "gemini-2.5-flash")
 
 REVIEWER_PROMPTS = {
     "hallucination_defense": """\
