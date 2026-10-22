@@ -562,6 +562,27 @@ class EvidenceVerifierTests(unittest.TestCase):
         self.assertEqual(review["coverage"]["assessed_claims"], 1)
         self.assertEqual(review["claims"][0]["status"], "supported")
 
+    def test_verification_runs_in_batches_and_a_failed_batch_is_reported_incomplete(self):
+        claims = [f"Fact number {n} about flies." for n in range(1, 7)]
+
+        def create(*, model, max_tokens, messages, system=None, tools=None, tool_choice=None):
+            prompt = messages[0]["content"]
+            if prompt.startswith("Extract every"):
+                payload = {"claims": [{"claim": c, "evidence_type": "general_background", "source_ids": []} for c in claims]}
+            else:
+                batch = json.loads(prompt.split("FACTUAL CLAIMS TO ASSESS:\n", 1)[1])
+                if any(item["claim_id"] == 6 for item in batch):
+                    raise TimeoutError("batch timed out")
+                payload = {"reviews": [{"claim_id": item["claim_id"], "status": "not_found", "source_id": "",
+                                        "evidence_quote": "", "reason": "x"} for item in batch]}
+            return types.SimpleNamespace(stop_reason="tool_use", content=[types.SimpleNamespace(type="tool_use", input=payload)])
+
+        client = types.SimpleNamespace(messages=types.SimpleNamespace(create=create))
+        review = verifier_module.verify_claims(" ".join(claims), [{"pmid": "1", "abstract": "x"}], client)
+
+        self.assertEqual(review["status"], "incomplete")
+        self.assertEqual(review["coverage"], {"factual_claims": 6, "assessed_claims": 4, "percent": 67})
+
     def test_paraphrased_claims_are_assessed_and_survive_revision_recheck(self):
         answer = "| Gene | Role |\n|---|---|\n| *jumu* | Heart |\n\nThe *fkh* gene controls gut development."
         table_claim = "jumu plays a role in the heart"
@@ -780,13 +801,7 @@ class EvidenceVerifierTests(unittest.TestCase):
             types.SimpleNamespace(content=[types.SimpleNamespace(text=json.dumps({
                 "revisions": [{"claim_id": 1, "revised_claim": revised_claim}]
             }))]),
-            types.SimpleNamespace(content=[types.SimpleNamespace(text=json.dumps({
-                "claims": [{
-                    "claim": revised_claim,
-                    "evidence_type": "finding",
-                    "source_ids": ["12345678"],
-                }]
-            }))]),
+            # Only the rewritten claim is re-verified; there is no second extraction.
             types.SimpleNamespace(content=[types.SimpleNamespace(text=json.dumps({
                 "reviews": [{
                     "claim_id": 1,
@@ -820,7 +835,7 @@ class EvidenceVerifierTests(unittest.TestCase):
         self.assertEqual(revised["references"], original["references"])
         self.assertEqual(review["revision"]["status"], "applied")
         self.assertEqual(review["claims"][0]["status"], "not_found")
-        self.assertEqual(client.messages.create.call_count, 5)
+        self.assertEqual(client.messages.create.call_count, 4)
         self.assertIn("checked again", verifier_module.format_evidence_review(review))
 
     def test_failed_revision_keeps_original_claim_and_reports_failure(self):
