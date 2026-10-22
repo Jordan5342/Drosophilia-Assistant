@@ -20,6 +20,7 @@ _MARKDOWN_EMPHASIS = "*`"
 
 
 def _normalize_evidence_text(text: str) -> str:
+    text = re.sub(r"<[^>]+>", "", text)  # PubMed markup such as <i>Drosophila</i>
     text = text.translate({ord(char): None for char in _MARKDOWN_EMPHASIS})
     return " ".join(text.casefold().split())
 
@@ -31,8 +32,11 @@ def _claim_pattern(claim: str) -> str:
 
 
 def _find_verbatim_evidence(quote: str, source_id: str, papers: List[Dict]):
-    normalized_quote = _normalize_evidence_text(quote)
-    if len(normalized_quote) < 40 or not re.search(r"[.!?][\"')\]]?$", quote.strip()):
+    # The quote must appear word for word within one abstract sentence; the full sentence is
+    # returned so readers see its context. (Requiring the exact whole sentence rejected real
+    # quotes that dropped an opener such as "In addition,".)
+    normalized_quote = _normalize_evidence_text(quote).rstrip(".!?")
+    if len(normalized_quote) < 40:
         return None
 
     for paper_index, paper in enumerate(papers, 1):
@@ -42,7 +46,7 @@ def _find_verbatim_evidence(quote: str, source_id: str, papers: List[Dict]):
         text = str(paper.get("abstract") or "")
         sentences = re.split(r"(?<=[.!?])\s+", text.strip())
         for sentence in sentences:
-            if normalized_quote == _normalize_evidence_text(sentence):
+            if normalized_quote in _normalize_evidence_text(sentence):
                 return {
                     "source_id": paper_source_id,
                     "quote": sentence.strip(),

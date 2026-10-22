@@ -673,6 +673,23 @@ class EvidenceVerifierTests(unittest.TestCase):
         formatted = verifier_module.format_evidence_review(review)
         self.assertIn("✅ **SUPPORTED** —", formatted)
 
+    def test_quote_within_a_marked_up_abstract_sentence_is_accepted(self):
+        sentence = ("In addition, knockdown of <i>TBPH</i> in <i>Drosophila</i> muscle precursor "
+                    "cells reduced lifespan.")
+        papers = [{"pmid": "39283487", "abstract": f"Background sentence here. {sentence} Closing sentence."}]
+
+        evidence = verifier_module._find_verbatim_evidence(
+            "Knockdown of TBPH in Drosophila muscle precursor cells reduced lifespan.", "39283487", papers
+        )
+
+        self.assertIsNotNone(evidence)
+        self.assertEqual(evidence["quote"], sentence)
+        # Short fragments and text absent from the abstract are still rejected.
+        self.assertIsNone(verifier_module._find_verbatim_evidence("reduced lifespan.", "39283487", papers))
+        self.assertIsNone(verifier_module._find_verbatim_evidence(
+            "Knockdown of TBPH in Drosophila neurons extended lifespan.", "39283487", papers
+        ))
+
     def test_claim_is_uncertain_when_reported_quote_is_not_in_abstract(self):
         client = Mock()
         client.messages.create.side_effect = [

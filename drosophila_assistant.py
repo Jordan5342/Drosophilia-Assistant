@@ -1,5 +1,6 @@
 import anthropic
 import functools
+import html
 import os
 import urllib.request
 from Bio import Entrez
@@ -36,7 +37,10 @@ Entrez.urlopen = functools.partial(urllib.request.urlopen, timeout=NCBI_TIMEOUT_
 MAX_ABSTRACT_CHARS = 4000
 
 
-def _clip_abstract(abstract: str) -> str:
+def _clean_abstract(abstract: str) -> str:
+    # PubMed abstracts carry markup ("The <i>Drosophila</i> leg"); quotes copied from them come
+    # back as plain text and failed the evidence check's verbatim match.
+    abstract = html.unescape(re.sub(r"<[^>]+>", "", abstract))
     return abstract[:MAX_ABSTRACT_CHARS] + '...' if len(abstract) > MAX_ABSTRACT_CHARS else abstract
 
 
@@ -220,7 +224,7 @@ class DrosophilaAssistant:
                         'journal': article_data.get('Journal', {}).get('Title', ''),
                         'doi': _pubmed_doi(article),
                         'pmid': pmid,
-                        'abstract': _clip_abstract(abstract),
+                        'abstract': _clean_abstract(abstract),
                         'url': f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
                         'source': 'FlyBase-linked PubMed',
                     })
@@ -268,7 +272,7 @@ class DrosophilaAssistant:
                         'journal': article_data.get('Journal', {}).get('Title', ''),
                         'doi': _pubmed_doi(article),
                         'pmid': pmid,
-                        'abstract': _clip_abstract(abstract),
+                        'abstract': _clean_abstract(abstract),
                         'url': f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
                         'source': 'PubMed',
                     })
@@ -423,7 +427,7 @@ class DrosophilaAssistant:
                 papers.append({
                     'title': title,
                     'authors': ', '.join(authors) + ' et al.' if authors else 'Unknown',
-                    'abstract': _clip_abstract(abstract),
+                    'abstract': _clean_abstract(abstract),
                     'pmid': pmid,
                     'year': year,
                     'journal': article_data.get('Journal', {}).get('Title', ''),
