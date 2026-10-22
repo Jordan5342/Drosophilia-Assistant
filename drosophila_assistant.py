@@ -30,6 +30,16 @@ Entrez.api_key = os.environ.get("NCBI_API_KEY", "")
 NCBI_TIMEOUT_SECONDS = 30
 Entrez.urlopen = functools.partial(urllib.request.urlopen, timeout=NCBI_TIMEOUT_SECONDS)
 
+# Abstracts were cut at 500 characters, which hid later sentences from the answer model and
+# the evidence check (supported claims came back "uncertain"). Keep them whole, with a cap
+# well above typical abstract length to bound prompt size.
+MAX_ABSTRACT_CHARS = 4000
+
+
+def _clip_abstract(abstract: str) -> str:
+    return abstract[:MAX_ABSTRACT_CHARS] + '...' if len(abstract) > MAX_ABSTRACT_CHARS else abstract
+
+
 # Anthropic's default is 10 minutes per call; fail sooner so the UI can report it.
 ANTHROPIC_TIMEOUT_SECONDS = 300.0
 
@@ -210,7 +220,7 @@ class DrosophilaAssistant:
                         'journal': article_data.get('Journal', {}).get('Title', ''),
                         'doi': _pubmed_doi(article),
                         'pmid': pmid,
-                        'abstract': abstract[:500] + '...' if len(abstract) > 500 else abstract,
+                        'abstract': _clip_abstract(abstract),
                         'url': f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
                         'source': 'FlyBase-linked PubMed',
                     })
@@ -258,7 +268,7 @@ class DrosophilaAssistant:
                         'journal': article_data.get('Journal', {}).get('Title', ''),
                         'doi': _pubmed_doi(article),
                         'pmid': pmid,
-                        'abstract': abstract[:500] + '...' if len(abstract) > 500 else abstract,
+                        'abstract': _clip_abstract(abstract),
                         'url': f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
                         'source': 'PubMed',
                     })
@@ -413,7 +423,7 @@ class DrosophilaAssistant:
                 papers.append({
                     'title': title,
                     'authors': ', '.join(authors) + ' et al.' if authors else 'Unknown',
-                    'abstract': abstract[:500] + '...' if len(abstract) > 500 else abstract,
+                    'abstract': _clip_abstract(abstract),
                     'pmid': pmid,
                     'year': year,
                     'journal': article_data.get('Journal', {}).get('Title', ''),

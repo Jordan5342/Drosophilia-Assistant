@@ -329,7 +329,7 @@ Otherwise ask 2-3 focused questions in a friendly paragraph under 100 words."""
             for i, p in enumerate(papers[:10], 1):
                 paper_context += f"[{i}] {p.get('authors', 'Unknown')} ({p.get('year', 'N/A')}). {p.get('title', 'No title')}. PMID: {p.get('pmid', 'N/A')}. URL: {p.get('url', '')}\n"
                 if p.get('abstract'):
-                    paper_context += f"    Abstract: {p['abstract'][:300]}...\n"
+                    paper_context += f"    Abstract: {p['abstract']}\n"
 
         gene_str = ', '.join(genes) if genes else 'the relevant gene(s)'
         clarification_str = f"\nAdditional researcher context: {user_clarifications}" if user_clarifications else ""
