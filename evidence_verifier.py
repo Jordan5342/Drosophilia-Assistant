@@ -3,10 +3,9 @@ import json
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
-from agents import parse_json_response
+from agents import CLAUDE_MODEL, NO_FORCED_TOOL_CHOICE, parse_json_response, response_text
 
 
-MODEL = "claude-sonnet-4-6"
 VALID_STATUSES = {"supported", "not_found", "uncertain"}
 FACTUAL_TYPES = {"finding", "inference", "general_background"}
 MAX_AUTO_REVISED_CLAIMS = 10
@@ -62,7 +61,9 @@ def _find_verbatim_evidence(quote: str, source_id: str, papers: List[Dict]):
 _JSON_TOOL_NAME = "submit_result"
 
 
-def _call_json_model(client, prompt: str, max_tokens: int, agent_name: str, list_key: str) -> Dict:
+def _call_json_model(
+    client, prompt: str, max_tokens: int, agent_name: str, list_key: str, model: str = CLAUDE_MODEL
+) -> Dict:
     """Return the model's JSON object, which must contain a list under list_key."""
     tool = {
         "name": _JSON_TOOL_NAME,
@@ -73,12 +74,18 @@ def _call_json_model(client, prompt: str, max_tokens: int, agent_name: str, list
             "required": [list_key],
         },
     }
+    if model in NO_FORCED_TOOL_CHOICE:
+        # A forced tool call is a 400 on these models; ask for the tool call instead.
+        prompt = f"{prompt}\nSubmit the JSON object by calling the {_JSON_TOOL_NAME} tool."
+        tool_choice = {"type": "auto"}
+    else:
+        tool_choice = {"type": "tool", "name": _JSON_TOOL_NAME}
     response = client.messages.create(
-        model=MODEL,
+        model=model,
         max_tokens=max_tokens,
         messages=[{"role": "user", "content": prompt}],
         tools=[tool],
-        tool_choice={"type": "tool", "name": _JSON_TOOL_NAME},
+        tool_choice=tool_choice,
     )
     if getattr(response, "stop_reason", None) == "max_tokens":
         raise ValueError(f"{agent_name} output was truncated at {max_tokens} tokens")
@@ -87,7 +94,7 @@ def _call_json_model(client, prompt: str, max_tokens: int, agent_name: str, list
     )
     if tool_use is not None and isinstance(tool_use.input, dict):
         return tool_use.input
-    result = parse_json_response(response.content[0].text.strip(), agent_name)
+    result = parse_json_response(response_text(response).strip(), agent_name)
     if result.get("_parse_error"):
         raise ValueError(f"{agent_name} returned invalid JSON")
     return result
@@ -114,7 +121,7 @@ def parse_structured_chat_response(raw: str):
     return result["answer"], claims if isinstance(claims, list) else None
 
 
-def _extract_claims(text: str, papers: List[Dict], client) -> List[Dict]:
+def _extract_claims(text: str, papers: List[Dict], client, model: str = CLAUDE_MODEL) -> List[Dict]:
     sources = [
         {
             "citation_number": index,
@@ -146,7 +153,7 @@ CURRENT SOURCE IDENTIFIERS AND CITATION NUMBERS:
 ANSWER:
 {text}
 """
-    result = _call_json_model(client, prompt, 4000, "claim_extractor", "claims")
+    result = _call_json_model(client, prompt, 4000, "claim_extractor", "claims", model)
     claims = result.get("claims")
     if not isinstance(claims, list):
         raise ValueError("claim extractor returned no claims list")
@@ -158,6 +165,7 @@ def verify_claims(
     papers: List[Dict],
     client,
     structured_claims: List[Dict] = None,
+    model: str = CLAUDE_MODEL,
 ) -> Dict:
     """Extract every claim, assess it against abstracts, and validate quote coverage."""
     if not papers:
@@ -169,7 +177,7 @@ def verify_claims(
         }
 
     try:
-        extracted_claims = _extract_claims(text, papers, client)
+        extracted_claims = _extract_claims(text, papers, client, model)
     except Exception as exc:
         print(f"  ⚠️  Claim extraction unavailable: {exc}")
         return _unavailable_review(
@@ -243,7 +251,7 @@ def verify_claims(
         }
 
     try:
-        reviews_by_id = _assess_claims(factual_claims, papers, client)
+        reviews_by_id = _assess_claims(factual_claims, papers, client, model)
     except Exception as exc:
         print(f"  ⚠️  Evidence verification unavailable: {exc}")
         return _unavailable_review("The automated evidence check could not be completed.")
@@ -261,7 +269,9 @@ def verify_claims(
     return _summarize_review(verified_claims)
 
 
-def _assess_claims(factual_claims: List[Dict], papers: List[Dict], client) -> Dict[int, Dict]:
+def _assess_claims(
+    factual_claims: List[Dict], papers: List[Dict], client, model: str = CLAUDE_MODEL
+) -> Dict[int, Dict]:
     """Review claims against the abstracts in parallel batches, keyed by claim_id.
 
     One call reviewing every claim took ~40s; batches run concurrently. A failed batch
@@ -298,7 +308,7 @@ RETRIEVED SOURCES:
 FACTUAL CLAIMS TO ASSESS:
 {json.dumps(batch, ensure_ascii=False)}
 """
-        result = _call_json_model(client, prompt, 4000, "evidence_verifier", "reviews")
+        result = _call_json_model(client, prompt, 4000, "evidence_verifier", "reviews", model)
         batch_ids = {claim["claim_id"] for claim in batch}
         return [
             item for item in result.get("reviews") or []
@@ -385,7 +395,9 @@ def _summarize_review(verified_claims: List[Dict]) -> Dict:
     }
 
 
-def create_claim_revisions(review: Dict, papers: List[Dict], client) -> Tuple[Dict, Dict]:
+def create_claim_revisions(
+    review: Dict, papers: List[Dict], client, model: str = CLAUDE_MODEL
+) -> Tuple[Dict, Dict]:
     """Ask for cautious replacements for claims not supported by the first review."""
     if review.get("status") in {"unavailable", "no_sources", "no_claims"}:
         return {}, {
@@ -457,7 +469,7 @@ CLAIMS:
 {json.dumps(unresolved, ensure_ascii=False)}
 """
     try:
-        result = _call_json_model(client, prompt, 4000, "claim_reviser", "revisions")
+        result = _call_json_model(client, prompt, 4000, "claim_reviser", "revisions", model)
         if not isinstance(result.get("revisions"), list):
             raise ValueError("claim reviser returned no revisions list")
         expected = {claim["claim_id"]: claim["claim"] for claim in unresolved}
@@ -536,17 +548,18 @@ def verify_and_revise_claims(
     structured_claims: Optional[List[Dict]] = None,
     content: Any = None,
     auto_revise: bool = True,
+    model: str = CLAUDE_MODEL,
 ) -> Tuple[Any, Dict]:
     """Review claims, qualify unsupported ones once, then assess the revised content."""
     original_content = text if content is None else content
-    review = verify_claims(text, papers, client, structured_claims=structured_claims)
+    review = verify_claims(text, papers, client, structured_claims=structured_claims, model=model)
     if not auto_revise:
         review["revision"] = {
             "status": "disabled",
             "message": "Automatic claim revision is disabled; review the claim statuses above manually.",
         }
         return original_content, review
-    replacements, revision = create_claim_revisions(review, papers, client)
+    replacements, revision = create_claim_revisions(review, papers, client, model)
     if not replacements:
         review["revision"] = revision
         return original_content, review
@@ -575,7 +588,7 @@ def verify_and_revise_claims(
         if claim.get("claim") in replacements
     ]
     try:
-        rechecks = _assess_claims(rewritten, papers, client)
+        rechecks = _assess_claims(rewritten, papers, client, model)
     except Exception as exc:
         print(f"  ⚠️  Revised-claim recheck unavailable: {exc}")
         rechecks = {}

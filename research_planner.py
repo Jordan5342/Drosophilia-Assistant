@@ -2,6 +2,7 @@ import anthropic
 import json
 import re
 from typing import Any, Optional, Dict, List, Set, Tuple
+from agents import CLAUDE_MODEL, response_text
 from evidence_verifier import format_evidence_review, verify_and_revise_claims
 
 # Intent keywords that trigger research planning mode (conservative)
@@ -216,6 +217,7 @@ def _remove_unverified_citation_markers(value: Any, valid_numbers: Set[int]) -> 
 class ResearchPlanner:
     def __init__(self, anthropic_client: anthropic.Anthropic):
         self.client = anthropic_client
+        self.model = CLAUDE_MODEL
         self.current_proposal: Optional[Dict] = None
         self.proposal_context: Dict = {}  # topic, genes, papers from prior chat
 
@@ -301,11 +303,11 @@ If the topic already specifies 3 or more of these, respond with exactly: SUFFICI
 Otherwise ask 2-3 focused questions in a friendly paragraph under 100 words."""
 
         response = self.client.messages.create(
-            model="claude-sonnet-4-6",
+            model=self.model,
             max_tokens=300,
             messages=[{"role": "user", "content": prompt}]
         )
-        result = response.content[0].text.strip()
+        result = response_text(response).strip()
         return None if result.startswith("SUFFICIENT") else result
 
     def generate_proposal(
@@ -439,13 +441,13 @@ REQUIREMENTS:
 
 
         response = self.client.messages.create(
-            model="claude-sonnet-4-6",
+            model=self.model,
             max_tokens=8000,
             system=system_prompt,
             messages=[{"role": "user", "content": user_prompt}]
         )
 
-        raw = response.content[0].text
+        raw = response_text(response)
 
         # Parse JSON - strip any markdown fencing
         clean = re.sub(r'^```(?:json)?\s*', '', raw.strip(), flags=re.MULTILINE)
@@ -492,6 +494,7 @@ REQUIREMENTS:
             structured_claims=proposal.get("evidence_claims"),
             content=proposal,
             auto_revise=auto_revise_claims,
+            model=self.model,
         )
         proposal["evidence_review"] = evidence_review
         self.current_proposal = proposal
@@ -529,13 +532,13 @@ Researcher's refinement request: "{refinement_request}"
 Update the proposal accordingly and return the updated version with a changes summary."""
 
         response = self.client.messages.create(
-            model="claude-sonnet-4-6",
+            model=self.model,
             max_tokens=8000,
             system=system_prompt,
             messages=[{"role": "user", "content": user_prompt}]
         )
 
-        raw = response.content[0].text
+        raw = response_text(response)
         clean = re.sub(r'^```(?:json)?\s*', '', raw.strip(), flags=re.MULTILINE)
         clean = re.sub(r'\s*```$', '', clean.strip(), flags=re.MULTILINE)
 
@@ -556,6 +559,7 @@ Update the proposal accordingly and return the updated version with a changes su
                 structured_claims=updated.get("evidence_claims"),
                 content=updated,
                 auto_revise=auto_revise_claims,
+                model=self.model,
             )
             updated["evidence_review"] = evidence_review
             self.current_proposal = updated
@@ -799,13 +803,13 @@ Controls: {proposal.get('controls', '')}
 Generate a complete bench-ready protocol. Be specific about genotypes, timing, and thresholds."""
 
         response = self.client.messages.create(
-            model="claude-sonnet-4-6",
+            model=self.model,
             max_tokens=8000,
             system=system_prompt,
             messages=[{"role": "user", "content": user_prompt}]
         )
 
-        raw = response.content[0].text
+        raw = response_text(response)
         clean = re.sub(r'^```(?:json)?\s*', '', raw.strip(), flags=re.MULTILINE)
         clean = re.sub(r'\s*```$', '', clean.strip(), flags=re.MULTILINE)
 

@@ -202,6 +202,14 @@
         }
 
         .auto-revision-toggle input { accent-color: #2E5FA3; }
+        .auto-revision-toggle select {
+            background: transparent;
+            border: none;
+            color: white;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        .auto-revision-toggle select option { color: #1a1a1a; }
 
         .status-badge {
             display: inline-flex;
@@ -962,6 +970,12 @@
                     <input type="checkbox" id="autoRevisionToggle" checked>
                     <span>Auto-revise claims</span>
                 </label>
+                <label class="auto-revision-toggle" title="Claude model used for chat, proposals, experiment designs, the AI pipeline and evidence checks.">
+                    <span>Model</span>
+                    <select id="modelSelect" aria-label="Claude model">
+                        <option value="">Default</option>
+                    </select>
+                </label>
                 <button class="btn" onclick="exportConversation()">💾 Export Chat</button>
             </div>
         </div>
@@ -1086,6 +1100,26 @@
     function autoRevisionEnabled() {
         return autoRevisionToggle.checked;
     }
+    const modelPreferenceKey = 'fly-design-claude-model';
+    const modelSelect = document.getElementById('modelSelect');
+    modelSelect.addEventListener('change', () => {
+        localStorage.setItem(modelPreferenceKey, modelSelect.value);
+    });
+    function selectedModel() {
+        return modelSelect.value;
+    }
+    function populateModelSelect(models, defaultModel) {
+        modelSelect.innerHTML = '';
+        for (const [id, label] of Object.entries(models || {})) {
+            const option = document.createElement('option');
+            option.value = id;
+            option.textContent = id === defaultModel ? `${label} (default)` : label;
+            modelSelect.appendChild(option);
+        }
+        const stored = localStorage.getItem(modelPreferenceKey);
+        const ids = Object.keys(models || {});
+        modelSelect.value = ids.includes(stored) ? stored : defaultModel;
+    }
     let isTyping = false;
     let inPlanningMode = false;
     let proposalReady = false;
@@ -1097,6 +1131,7 @@
         try {
             const res = await fetch(`${API_URL}/health`);
             const data = await res.json();
+            populateModelSelect(data.claude_models, data.default_claude_model);
             const status = data.api_configured
                 ? data.critic_configured ? 'Connected' : 'Chat ready · Critic key missing'
                 : 'API Missing';
@@ -1154,7 +1189,8 @@
                     session_id: sessionId,
                     force_planning: forcePlanning,
                     awaiting_clarification: awaitingClarification,
-                    auto_revise_claims: autoRevisionEnabled()
+                    auto_revise_claims: autoRevisionEnabled(),
+                    model: selectedModel()
                 })
             });
             const data = await res.json();
@@ -1342,7 +1378,8 @@
                 body: JSON.stringify({
                     session_id: sessionId,
                     aim_number: aimNumber,
-                    proposal: currentProposalData  // send cached JSON as fallback
+                    proposal: currentProposalData,  // send cached JSON as fallback
+                    model: selectedModel()
                 })
             });
             const data = await res.json();
@@ -1932,7 +1969,8 @@
                 body: JSON.stringify({
                     query,
                     session_id: sessionId,
-                    auto_revise_claims: autoRevisionEnabled()
+                    auto_revise_claims: autoRevisionEnabled(),
+                    model: selectedModel()
                 })
             });
             if (!response.ok) {

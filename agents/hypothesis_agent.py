@@ -1,9 +1,7 @@
 import json
 from typing import Dict, List, Optional
 import anthropic
-from agents import parse_json_response
-
-MODEL = "claude-sonnet-4-6"
+from agents import CLAUDE_MODEL, parse_json_response, response_text
 
 SYSTEM_PROMPT = """\
 You are a Drosophila melanogaster experimental design agent.
@@ -54,8 +52,9 @@ RULES:
 
 
 class HypothesisAgent:
-    def __init__(self, client: anthropic.Anthropic):
+    def __init__(self, client: anthropic.Anthropic, model: str = CLAUDE_MODEL):
         self.client = client
+        self.model = model
 
     def run(
         self,
@@ -80,10 +79,10 @@ class HypothesisAgent:
         user_content += "Design a specific, testable hypothesis and experimental plan. Return JSON only."
 
         response = self.client.messages.create(
-            model=MODEL,
+            model=self.model,
             max_tokens=8000,
             system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_content}]
         )
 
-        return parse_json_response(response.content[0].text.strip(), "hypothesis_agent")
+        return parse_json_response(response_text(response).strip(), "hypothesis_agent")

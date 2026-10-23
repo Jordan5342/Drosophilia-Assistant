@@ -32,12 +32,13 @@ load_dotenv()
 
 import anthropic
 
+from agents import CLAUDE_MODEL, response_text
 from agents.literature_agent import LiteratureAgent
 from agents.hypothesis_agent import HypothesisAgent
 from agents.gemini_critic_agent import GeminiCriticAgent
 from drosophila_assistant import ANTHROPIC_TIMEOUT_SECONDS, DrosophilaAssistant, _GENE_DB
 
-TOPIC_GENERATION_MODEL = "claude-sonnet-4-6"
+TOPIC_GENERATION_MODEL = CLAUDE_MODEL
 
 TOPIC_GENERATION_PROMPT = """\
 You are helping assemble a calibration set for a Drosophila melanogaster cancer/developmental \
@@ -60,7 +61,7 @@ def generate_topics(client: anthropic.Anthropic, n: int) -> list:
         max_tokens=1000,
         messages=[{"role": "user", "content": TOPIC_GENERATION_PROMPT.format(n=n)}],
     )
-    raw = response.content[0].text.strip()
+    raw = response_text(response).strip()
     raw = raw.strip("`")
     if raw.startswith("json"):
         raw = raw[4:].strip()
@@ -162,6 +163,7 @@ def main():
         topics = generate_topics(client, args.n)
     extract_genes = legacy_extract_gene_names if args.gene_extraction == "legacy" else None
     print(f"🧬 Gene extraction: {args.gene_extraction}")
+    print(f"🤖 Claude model: {CLAUDE_MODEL}")
     for i, t in enumerate(topics, 1):
         print(f"  {i}. {t}")
 
@@ -180,7 +182,8 @@ def main():
     out_path = Path(args.out)
     with open(out_path, "w") as f:
         json.dump({"generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-                   "gene_extraction": args.gene_extraction, "results": results}, f, indent=2)
+                   "gene_extraction": args.gene_extraction, "claude_model": CLAUDE_MODEL,
+                   "results": results}, f, indent=2)
 
     print(f"\n\n✅ Done. Wrote {len(results)} entries to {out_path.resolve()}")
 

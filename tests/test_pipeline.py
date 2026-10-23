@@ -963,3 +963,35 @@ class EvidenceVerifierTests(unittest.TestCase):
         self.assertEqual(review["status"], "unavailable")
         self.assertIn("could not be completed", review["message"])
         self.assertIn("Treat the answer's factual claims as unverified.", verifier_module.format_evidence_review(review))
+
+
+class ModelChoiceTests(unittest.TestCase):
+    def test_unknown_or_missing_model_falls_back_to_default(self):
+        agents_module = importlib.import_module("agents")
+        self.assertEqual(agents_module.resolve_model("claude-opus-5-5"), "claude-opus-5-5")
+        self.assertEqual(agents_module.resolve_model("not-a-model"), agents_module.CLAUDE_MODEL)
+        self.assertEqual(agents_module.resolve_model(None), agents_module.CLAUDE_MODEL)
+
+    def test_response_text_skips_a_leading_thinking_block(self):
+        agents_module = importlib.import_module("agents")
+        response = types.SimpleNamespace(content=[
+            types.SimpleNamespace(type="thinking", thinking=""),
+            types.SimpleNamespace(type="text", text='{"claims": []}'),
+        ])
+        self.assertEqual(agents_module.response_text(response), '{"claims": []}')
+
+    def test_json_call_forces_the_tool_only_on_models_that_allow_it(self):
+        seen = []
+
+        def create(*, model, max_tokens, messages, system=None, tools=None, tool_choice=None):
+            seen.append(tool_choice["type"])
+            return types.SimpleNamespace(
+                stop_reason="tool_use",
+                content=[types.SimpleNamespace(type="tool_use", input={"claims": []})],
+            )
+
+        client = types.SimpleNamespace(messages=types.SimpleNamespace(create=create))
+        for model in ("claude-sonnet-4-6", "claude-opus-5-5"):
+            verifier_module._call_json_model(client, "prompt", 100, "test", "claims", model)
+
+        self.assertEqual(seen, ["tool", "auto"])

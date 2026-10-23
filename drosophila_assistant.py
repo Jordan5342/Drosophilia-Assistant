@@ -9,6 +9,7 @@ import requests
 from pathlib import Path
 from typing import Optional, Dict, List
 import re
+from agents import CLAUDE_MODEL, response_text
 from evidence_verifier import (
     format_evidence_review,
     parse_structured_chat_response,
@@ -129,6 +130,7 @@ def _publication_year(article_data: Dict) -> str:
 class DrosophilaAssistant:
     def __init__(self, api_key):
         self.client = anthropic.Anthropic(api_key=api_key, timeout=ANTHROPIC_TIMEOUT_SECONDS)
+        self.model = CLAUDE_MODEL
         self.conversation_history = []
         self.mentioned_genes = set()
         self.last_topic = ""
@@ -1014,13 +1016,13 @@ At the end of responses, if the topic could support a research proposal, add a b
 
         print("🤖 Calling Claude...")
         response = self.client.messages.create(
-            model="claude-sonnet-4-6",
+            model=self.model,
             max_tokens=6000,
             system=system_prompt,
             messages=self.conversation_history
         )
 
-        assistant_message = response.content[0].text
+        assistant_message = response_text(response)
         assistant_message, structured_claims = parse_structured_chat_response(
             assistant_message
         )
@@ -1034,6 +1036,7 @@ At the end of responses, if the topic could support a research proposal, add a b
                 "evidence_claims": structured_claims or [],
             },
             auto_revise=auto_revise_claims,
+            model=self.model,
         )
         assistant_message = response_content["answer"]
         assistant_message = validate_answer_citations(assistant_message, all_papers)
@@ -1057,3 +1060,9 @@ At the end of responses, if the topic could support a research proposal, add a b
         self.planning_mode = False
         self.awaiting_clarification = False
         self.planner = ResearchPlanner(self.client)
+        self.planner.model = self.model
+
+    def set_model(self, model: str):
+        """Use this Claude model for chat, planning and evidence checks in this session."""
+        self.model = model
+        self.planner.model = model

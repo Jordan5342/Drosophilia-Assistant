@@ -13,6 +13,8 @@ services:
         sync: false
       - key: DATABASE_URL
         sync: false
+      - key: CLAUDE_MODEL
+        value: claude-sonnet-4-6
       - key: GEMINI_CRITIC_MODEL
         value: gemini-2.5-flash
       - key: PYTHON_VERSION

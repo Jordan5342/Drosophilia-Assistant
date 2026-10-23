@@ -10,6 +10,7 @@ load_dotenv()
 
 from Bio import Entrez
 from drosophila_assistant import DrosophilaAssistant
+from agents import CLAUDE_MODEL, CLAUDE_MODELS, resolve_model
 from agents.pipeline import AgentPipeline, build_pipeline_proposal
 from evidence_verifier import verify_and_revise_claims
 import database
@@ -123,6 +124,7 @@ def chat():
             return jsonify({'error': 'No message provided'}), 400
 
         session_assistant = get_session(session_id)
+        session_assistant.set_model(resolve_model(data.get('model')))
 
         # Restore client-side planning state if server session was reset (e.g. after restart)
         print(f"  🔍 State: client_awaiting={client_awaiting}, server_awaiting={session_assistant.awaiting_clarification}, force={force_planning}")
@@ -308,6 +310,7 @@ def design_experiment():
         client_proposal = data.get('proposal', None)  # fallback from browser cache
 
         session_assistant = get_session(session_id)
+        session_assistant.set_model(resolve_model(data.get('model')))
         proposal = session_assistant.planner.get_proposal_for_export()
 
         # If server lost the proposal (restart), restore from client-side cache
@@ -393,6 +396,7 @@ def agent_pipeline():
             return jsonify({'error': 'No query provided'}), 400
 
         session_assistant = get_session(session_id)
+        session_assistant.set_model(resolve_model(data.get('model')))
 
         # Extract topic and gene list using existing helpers
         topic = session_assistant.planner.extract_topic_from_message(query) or query[:120]
@@ -403,12 +407,13 @@ def agent_pipeline():
         print(f"\n{'='*70}")
         print(f"[Agent Pipeline] Query: {query[:80]}")
         print(f"[Agent Pipeline] Topic: {topic[:60]} | Genes: {genes}")
-        print(f"[Agent Pipeline] DEBUG_AGENTS={DEBUG_AGENTS}")
+        print(f"[Agent Pipeline] Model: {session_assistant.model} | DEBUG_AGENTS={DEBUG_AGENTS}")
         print(f"{'='*70}")
 
         pipeline = AgentPipeline(
             client=session_assistant.client,
-            fetch_literature_fn=session_assistant.fetch_literature_for_proposal
+            fetch_literature_fn=session_assistant.fetch_literature_for_proposal,
+            model=session_assistant.model,
         )
 
         def generate():
@@ -440,6 +445,7 @@ def agent_pipeline():
                             structured_claims=proposal.get('evidence_claims'),
                             content=proposal,
                             auto_revise=auto_revise_claims,
+                            model=session_assistant.model,
                         )
                         proposal['evidence_review'] = evidence_review
                         session_assistant.planner.current_proposal = proposal
@@ -505,6 +511,8 @@ def health():
         **diagnostics,
         'api_configured': assistant is not None,
         'critic_configured': bool(os.environ.get("GEMINI_API_KEY")),
+        'claude_models': CLAUDE_MODELS,
+        'default_claude_model': CLAUDE_MODEL,
         'features': {
             'pubmed_search': True,
             'flybase_lookup': True,

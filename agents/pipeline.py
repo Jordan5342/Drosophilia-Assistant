@@ -1,5 +1,6 @@
 import os
 from typing import Dict, Generator, List, Optional
+from agents import CLAUDE_MODEL
 from agents.literature_agent import LiteratureAgent
 from agents.hypothesis_agent import HypothesisAgent
 from agents.gemini_critic_agent import GeminiCriticAgent
@@ -119,14 +120,14 @@ def build_pipeline_proposal(topic: str, literature: Dict, hypothesis: Dict, crit
 
 
 class AgentPipeline:
-    def __init__(self, client, fetch_literature_fn):
+    def __init__(self, client, fetch_literature_fn, model: str = CLAUDE_MODEL):
         """
         client: anthropic.Anthropic instance
         fetch_literature_fn: callable matching DrosophilaAssistant.fetch_literature_for_proposal
                              signature: (topic, genes, user_clarifications) -> List[Dict]
         """
-        self.lit_agent = LiteratureAgent(client)
-        self.hyp_agent = HypothesisAgent(client)
+        self.lit_agent = LiteratureAgent(client, model)
+        self.hyp_agent = HypothesisAgent(client, model)
         self.critic = GeminiCriticAgent(api_key=os.environ.get("GEMINI_API_KEY"))
         self.fetch_literature = fetch_literature_fn
 

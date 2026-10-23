@@ -65,6 +65,7 @@ Edit `.env` and add the keys you need:
 ```
 ANTHROPIC_API_KEY=
 GEMINI_API_KEY=
+CLAUDE_MODEL=claude-sonnet-4-6
 GEMINI_CRITIC_MODEL=gemini-2.5-flash
 DATABASE_URL=
 ```
@@ -72,6 +73,7 @@ DATABASE_URL=
 - `ANTHROPIC_API_KEY` is required for chat and proposal generation.
 - `GEMINI_API_KEY` is required to run the independent AI critic pipeline.
 - `DATABASE_URL` is optional; set it to a PostgreSQL connection string (for example, from Supabase) to enable persistence. Without it, the app runs without database persistence.
+- `CLAUDE_MODEL` is optional and defaults to `claude-sonnet-4-6`. It sets the default Claude model for chat, planning, the Literature and Hypothesis agents, and the evidence check. The **Model** menu in the app header overrides it per browser (Sonnet 4.6, Sonnet 5.5 or Opus 5.5). To compare models on the same topics, run `CLAUDE_MODEL=claude-opus-5-5 python run_calibration.py --topics-from topics.json --out opus.json`; the output records which model was used.
 - `GEMINI_CRITIC_MODEL` is optional and defaults to `gemini-2.5-flash`.
 
 The application loads `.env` automatically. Keep real keys in `.env` or your deployment's secret settings; do not commit them.
@@ -92,7 +94,7 @@ python -m unittest discover -s tests
 
 ## Render deployment
 
-The included [render.yaml](./render.yaml) configures the Python 3.11 web service and install/start commands. Add `ANTHROPIC_API_KEY` and `GEMINI_API_KEY` as Render secrets to enable chat and the critic pipeline. Add `DATABASE_URL` as a secret if database persistence is needed. `GEMINI_CRITIC_MODEL` can be overridden in the service environment.
+The included [render.yaml](./render.yaml) configures the Python 3.11 web service and install/start commands. Add `ANTHROPIC_API_KEY` and `GEMINI_API_KEY` as Render secrets to enable chat and the critic pipeline. Add `DATABASE_URL` as a secret if database persistence is needed. `CLAUDE_MODEL` and `GEMINI_CRITIC_MODEL` can be overridden in the service environment.
 
 ## Status
 
