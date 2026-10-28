@@ -25,7 +25,8 @@ from research_planner import (
 
 # Configure Entrez
 Entrez.email = "jordanszt@icloud.com"
-Entrez.api_key = os.environ.get("NCBI_API_KEY", "")
+# An empty api_key is still sent and NCBI rejects every search with a 400; send none instead.
+Entrez.api_key = os.environ.get("NCBI_API_KEY", "").strip() or None
 
 # Bio.Entrez calls urlopen() with no timeout, so one stalled NCBI request hangs the
 # whole request (or calibration run) forever. Give it a deadline instead.
