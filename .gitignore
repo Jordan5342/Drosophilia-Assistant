@@ -3,4 +3,6 @@
 venv/
 __pycache__/
 *.py[cod]
-question_runs/
+# Keep the run results in git as the record for the lab's scoring round;
+# papers.json is just a PubMed cache that reruns rebuild.
+question_runs/papers.json
